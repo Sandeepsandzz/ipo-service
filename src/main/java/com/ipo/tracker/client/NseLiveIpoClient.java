@@ -41,6 +41,11 @@ public class NseLiveIpoClient {
             .appendPattern("d-MMM-yyyy")
             .toFormatter(Locale.ENGLISH);
 
+    private static final DateTimeFormatter MONTH_DAY_FMT = new DateTimeFormatterBuilder()
+            .parseCaseInsensitive()
+            .appendPattern("d-MMM")
+            .toFormatter(Locale.ENGLISH);
+
     private static final Pattern PRICE_NUMBER_PATTERN = Pattern.compile("(\\d+(?:\\.\\d+)?)");
 
     private final ObjectMapper objectMapper;
@@ -95,28 +100,33 @@ public class NseLiveIpoClient {
             ensureNseSession();
 
             List<Ipo> active = fetchActiveFromNse();
-            if (!active.isEmpty()) {
-                cachedActive.clear();
-                cachedActive.addAll(active);
-            }
-
             List<Ipo> upcoming = fetchUpcomingFromNse();
-            if (!upcoming.isEmpty()) {
-                cachedUpcoming.clear();
-                cachedUpcoming.addAll(upcoming);
-            }
-
             List<Ipo> past = fetchPastFromNse();
-            if (!past.isEmpty()) {
-                cachedPast.clear();
-                cachedPast.addAll(past);
+
+            if (active.isEmpty() && upcoming.isEmpty()) {
+                log.warn("NSE India returned empty/403 (cloud datacenter IP detected). Activating live market tracker fallback...");
+                fetchFromMarketTrackerFallback();
+            } else {
+                if (!active.isEmpty()) {
+                    cachedActive.clear();
+                    cachedActive.addAll(active);
+                }
+                if (!upcoming.isEmpty()) {
+                    cachedUpcoming.clear();
+                    cachedUpcoming.addAll(upcoming);
+                }
+                if (!past.isEmpty()) {
+                    cachedPast.clear();
+                    cachedPast.addAll(past);
+                }
             }
 
             lastCacheUpdate = Instant.now();
-            log.info("NSE Live IPO cache refreshed: {} active, {} upcoming, {} past issues.",
+            log.info("Live IPO cache refreshed: {} active, {} upcoming, {} past issues.",
                     cachedActive.size(), cachedUpcoming.size(), cachedPast.size());
         } catch (Exception e) {
             log.error("Failed to refresh live IPO data from NSE: {}", e.getMessage(), e);
+            fetchFromMarketTrackerFallback();
         }
     }
 
@@ -322,6 +332,173 @@ public class NseLiveIpoClient {
         } catch (Exception e) {
             return raw;
         }
+    }
+
+    private void fetchFromMarketTrackerFallback() {
+        try {
+            HttpRequest req = HttpRequest.newBuilder()
+                    .uri(URI.create("https://www.investorgain.com/report/live-ipo-gmp/331/"))
+                    .header("User-Agent", USER_AGENT)
+                    .timeout(Duration.ofSeconds(10))
+                    .GET()
+                    .build();
+
+            HttpResponse<String> resp = httpClient.send(req, HttpResponse.BodyHandlers.ofString());
+            if (resp.statusCode() != 200) {
+                log.warn("Market tracker fallback returned status {}", resp.statusCode());
+                return;
+            }
+
+            String html = resp.body();
+            String[] rows = html.split("<tr[^>]*>");
+            LocalDate today = LocalDate.now();
+
+            List<Ipo> fallbackActive = new ArrayList<>();
+            List<Ipo> fallbackUpcoming = new ArrayList<>();
+            List<Ipo> fallbackPast = new ArrayList<>();
+
+            Pattern namePat = Pattern.compile("title=\"([^\"]+)\"[^>]*>([^<]+)</a>");
+            Pattern badgePat = Pattern.compile("<span class=\"badge[^\"]*\">([^<]+)</span>");
+            Pattern gmpPat = Pattern.compile("data-label=\"GMP\"[^>]*>.*?<b>([^<]+)</b>(?:\\s*\\(([^)]+)\\))?", Pattern.DOTALL);
+            Pattern subPat = Pattern.compile("data-label=\"Sub\"[^>]*>.*?<div class=\"mono-num\">([^<]*)</div>", Pattern.DOTALL);
+            Pattern pricePat = Pattern.compile("data-label=\"Price \\(₹\\)\"[^>]*>.*?<div class=\"mono-num\">([^<]*)</div>", Pattern.DOTALL);
+            Pattern sizePat = Pattern.compile("data-label=\"IPO Size\"[^>]*>.*?<div class=\"mono-num\">([^<]*)</div>", Pattern.DOTALL);
+            Pattern lotPat = Pattern.compile("data-label=\"Lot\"[^>]*>.*?<div class=\"mono-num\">([^<]*)</div>", Pattern.DOTALL);
+            Pattern openPat = Pattern.compile("data-label=\"Open\"[^>]*>.*?<div class=\"mono-num\">([^<\\n]+)", Pattern.DOTALL);
+            Pattern closePat = Pattern.compile("data-label=\"Close\"[^>]*>.*?<div class=\"mono-num\">([^<\\n]+)", Pattern.DOTALL);
+            Pattern listPat = Pattern.compile("data-label=\"Listing\"[^>]*>.*?<div class=\"mono-num\">([^<\\n]+)", Pattern.DOTALL);
+
+            for (String row : rows) {
+                Matcher nm = namePat.matcher(row);
+                if (!nm.find()) continue;
+
+                String companyName = nm.group(2).trim();
+                if (companyName.equalsIgnoreCase("GMP") || companyName.equalsIgnoreCase("Name")) continue;
+
+                String badge = "";
+                Matcher bm = badgePat.matcher(row);
+                if (bm.find()) badge = bm.group(1).trim();
+                IpoType issueType = badge.equalsIgnoreCase("SME") ? IpoType.SME : IpoType.MAINBOARD;
+
+                String gmp = "₹0 (0.00%)";
+                Matcher gm = gmpPat.matcher(row);
+                if (gm.find()) {
+                    String val = gm.group(1).trim();
+                    String pct = gm.group(2) != null ? gm.group(2).trim() : "-";
+                    if (!val.equals("--")) {
+                        gmp = "+₹" + val + " (" + pct + ")";
+                    }
+                }
+
+                String subStatus = "N/A";
+                Matcher sm = subPat.matcher(row);
+                if (sm.find() && !sm.group(1).isBlank() && !sm.group(1).equals("-")) {
+                    subStatus = sm.group(1).trim() + " overall";
+                }
+
+                String priceStr = "100";
+                Matcher pm = pricePat.matcher(row);
+                if (pm.find()) priceStr = pm.group(1).trim();
+                double[] prices = extractPriceBand(priceStr);
+                double minPrice = prices[0];
+                double maxPrice = prices[1];
+
+                int lotSize = 100;
+                Matcher lm = lotPat.matcher(row);
+                if (lm.find() && !lm.group(1).isBlank() && !lm.group(1).equals("-")) {
+                    try {
+                        lotSize = Integer.parseInt(lm.group(1).trim());
+                    } catch (Exception ignored) {}
+                } else if (maxPrice > 0) {
+                    lotSize = Math.max(1, (int) Math.round(14500.0 / maxPrice));
+                }
+                double minInvestment = lotSize * maxPrice;
+
+                String issueSize = "₹100+ Cr";
+                Matcher szm = sizePat.matcher(row);
+                if (szm.find() && !szm.group(1).isBlank()) {
+                    issueSize = szm.group(1).replaceAll("&#8377;", "₹").trim();
+                }
+
+                LocalDate openDate = parseShortDate(row, openPat, today);
+                LocalDate closeDate = parseShortDate(row, closePat, today);
+                LocalDate listingDate = parseShortDate(row, listPat, closeDate != null ? closeDate.plusDays(4) : today.plusDays(7));
+
+                if (openDate == null || closeDate == null) continue;
+
+                String symbol = companyName.replaceAll("[^A-Za-z0-9]", "").toUpperCase();
+                if (symbol.length() > 10) symbol = symbol.substring(0, 10);
+                String id = symbol.toLowerCase();
+
+                IpoStatus status;
+                if (!today.isBefore(openDate) && !today.isAfter(closeDate)) {
+                    status = IpoStatus.OPEN;
+                } else if (today.isBefore(openDate)) {
+                    status = IpoStatus.UPCOMING;
+                } else {
+                    status = IpoStatus.CLOSED;
+                }
+
+                Ipo ipo = new Ipo(
+                        id,
+                        companyName,
+                        symbol,
+                        "NSE, BSE",
+                        issueType,
+                        openDate,
+                        closeDate,
+                        listingDate,
+                        minPrice,
+                        maxPrice,
+                        lotSize,
+                        minInvestment,
+                        issueSize,
+                        status,
+                        gmp,
+                        subStatus,
+                        "Link Intime / KFintech"
+                );
+
+                if (status == IpoStatus.OPEN) {
+                    fallbackActive.add(ipo);
+                } else if (status == IpoStatus.UPCOMING) {
+                    fallbackUpcoming.add(ipo);
+                } else if (fallbackPast.size() < 15) {
+                    fallbackPast.add(ipo);
+                }
+            }
+
+            if (!fallbackActive.isEmpty() || !fallbackUpcoming.isEmpty()) {
+                cachedActive.clear();
+                cachedActive.addAll(fallbackActive);
+
+                cachedUpcoming.clear();
+                cachedUpcoming.addAll(fallbackUpcoming);
+
+                cachedPast.clear();
+                cachedPast.addAll(fallbackPast);
+
+                lastCacheUpdate = Instant.now();
+                log.info("Market tracker fallback loaded: {} active, {} upcoming, {} past IPOs.",
+                        cachedActive.size(), cachedUpcoming.size(), cachedPast.size());
+            }
+        } catch (Exception e) {
+            log.error("Failed to load live market tracker fallback: {}", e.getMessage(), e);
+        }
+    }
+
+    private LocalDate parseShortDate(String row, Pattern pat, LocalDate today) {
+        Matcher m = pat.matcher(row);
+        if (m.find()) {
+            String str = m.group(1).replaceAll("<[^>]*>", "").trim();
+            if (!str.isBlank() && !str.equals("-")) {
+                try {
+                    MonthDay md = MonthDay.parse(str, MONTH_DAY_FMT);
+                    return md.atYear(today.getYear());
+                } catch (Exception ignored) {}
+            }
+        }
+        return null;
     }
 
     private String executeGet(String url) {
