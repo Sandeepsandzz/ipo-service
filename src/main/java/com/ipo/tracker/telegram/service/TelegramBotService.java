@@ -130,7 +130,7 @@ public class TelegramBotService {
                 sendReply(chatId, formatter.formatUpcomingIpos(upcoming), ReplyKeyboardMarkup.defaultMenu());
             } else if (text.startsWith("/closed") || text.contains("closed ipo")) {
                 List<Ipo> closed = ipoService.getClosedIpos();
-                sendReply(chatId, "📊 <b>Recently Closed IPOs:</b>\n\n" + formatter.formatActiveIpos(closed), ReplyKeyboardMarkup.defaultMenu());
+                sendReply(chatId, formatter.formatClosedIpos(closed), ReplyKeyboardMarkup.defaultMenu());
             } else if (text.startsWith("/help") || text.equals("❓ help")) {
                 sendReply(chatId, formatter.formatHelp(), ReplyKeyboardMarkup.defaultMenu());
             } else if (text.startsWith("/ipo ") || text.startsWith("/search ")) {
@@ -184,6 +184,21 @@ public class TelegramBotService {
             return;
         }
 
+        if (htmlText == null || htmlText.isBlank()) return;
+
+        // Telegram message limit is 4096 chars. If message is longer, safely split into chunks
+        if (htmlText.length() <= 3800) {
+            executeSendMessage(chatId, htmlText, replyMarkup);
+        } else {
+            List<String> chunks = splitHtmlMessage(htmlText, 3800);
+            for (int i = 0; i < chunks.size(); i++) {
+                Object markup = (i == chunks.size() - 1) ? replyMarkup : null;
+                executeSendMessage(chatId, chunks.get(i), markup);
+            }
+        }
+    }
+
+    private void executeSendMessage(Long chatId, String htmlText, Object replyMarkup) {
         String url = TELEGRAM_API_BASE + properties.getToken() + "/sendMessage";
         SendMessageRequest request = SendMessageRequest.html(chatId, htmlText, replyMarkup);
 
@@ -197,6 +212,25 @@ public class TelegramBotService {
         } catch (Exception e) {
             log.error("Failed to send Telegram message to chatId {}: {}", chatId, e.getMessage());
         }
+    }
+
+    private List<String> splitHtmlMessage(String text, int maxLength) {
+        List<String> chunks = new java.util.ArrayList<>();
+        int length = text.length();
+        int start = 0;
+
+        while (start < length) {
+            int end = Math.min(start + maxLength, length);
+            if (end < length) {
+                int lastNewline = text.lastIndexOf('\n', end);
+                if (lastNewline > start) {
+                    end = lastNewline;
+                }
+            }
+            chunks.add(text.substring(start, end).trim());
+            start = end;
+        }
+        return chunks;
     }
 
     private String escapeHtml(String input) {

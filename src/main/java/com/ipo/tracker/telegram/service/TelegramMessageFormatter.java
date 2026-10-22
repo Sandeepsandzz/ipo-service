@@ -77,6 +77,31 @@ public class TelegramMessageFormatter {
         return sb.toString();
     }
 
+    public String formatClosedIpos(List<Ipo> ipos) {
+        if (ipos.isEmpty()) {
+            return "📊 <b>No recently closed IPOs found.</b>";
+        }
+
+        StringBuilder sb = new StringBuilder();
+        int displayCount = Math.min(ipos.size(), 10);
+        sb.append("📊 <b>Recently Closed / Listed IPOs (Top ").append(displayCount).append("):</b>\n\n");
+
+        for (int i = 0; i < displayCount; i++) {
+            Ipo ipo = ipos.get(i);
+            sb.append("<b>").append(i + 1).append(". ").append(ipo.companyName()).append("</b>\n");
+            sb.append("🏷 <code>").append(ipo.symbol()).append("</code> (").append(ipo.issueType()).append(")\n");
+            sb.append("💰 <b>Price:</b> ₹").append(ipo.minPrice() == ipo.maxPrice() ? String.format("%.0f", ipo.maxPrice()) : ipo.minPrice() + " - ₹" + ipo.maxPrice()).append("\n");
+            sb.append("🗓 <b>Bidding Closed:</b> ").append(ipo.closeDate().format(DATE_FMT)).append("\n");
+            if (ipo.listingDate() != null) {
+                sb.append("🔔 <b>Listing Date:</b> ").append(ipo.listingDate().format(DATE_FMT)).append("\n");
+            }
+            sb.append("────────────────────\n");
+        }
+
+        sb.append("\n<i>💡 Type <code>/ipo &lt;symbol&gt;</code> for in-depth details of any IPO.</i>");
+        return sb.toString();
+    }
+
     public String formatSingleIpo(Ipo ipo) {
         return """
             🏢 <b>%s</b> (%s)
