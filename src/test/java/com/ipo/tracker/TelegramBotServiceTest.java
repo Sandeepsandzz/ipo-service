@@ -1,5 +1,8 @@
 package com.ipo.tracker;
 
+import com.ipo.tracker.model.Ipo;
+import com.ipo.tracker.model.IpoStatus;
+import com.ipo.tracker.model.IpoType;
 import com.ipo.tracker.service.IpoService;
 import com.ipo.tracker.telegram.TelegramBotProperties;
 import com.ipo.tracker.telegram.dto.TelegramChat;
@@ -11,6 +14,9 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+
+import java.time.LocalDate;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -36,22 +42,60 @@ class TelegramBotServiceTest {
 
     @Test
     void testFormatterGeneratesActiveIposCard() {
-        var active = ipoService.getActiveIpos();
-        String formatted = formatter.formatActiveIpos(active);
+        Ipo sampleIpo = new Ipo(
+                "sample-ipo",
+                "Sample Company Limited",
+                "SAMPLE",
+                "NSE, BSE",
+                IpoType.MAINBOARD,
+                LocalDate.now(),
+                LocalDate.now().plusDays(2),
+                LocalDate.now().plusDays(5),
+                500.0,
+                520.0,
+                28,
+                28 * 520.0,
+                "₹1,500 Cr",
+                IpoStatus.OPEN,
+                "+₹50 (9.6%)",
+                "2.5x overall",
+                "Link Intime"
+        );
+
+        String formatted = formatter.formatActiveIpos(List.of(sampleIpo));
 
         assertTrue(formatted.contains("IPOs Open to Apply Today"));
-        assertTrue(formatted.contains("SWIGGY"));
+        assertTrue(formatted.contains("SAMPLE"));
         assertTrue(formatted.contains("GMP:"));
         assertTrue(formatted.contains("Lot Size:"));
     }
 
     @Test
     void testFormatterGeneratesUpcomingIposCard() {
-        var upcoming = ipoService.getUpcomingIpos();
-        String formatted = formatter.formatUpcomingIpos(upcoming);
+        Ipo upcoming = new Ipo(
+                "upcoming-sample",
+                "Upcoming Tech Ltd",
+                "UPTECH",
+                "NSE, BSE",
+                IpoType.MAINBOARD,
+                LocalDate.now().plusDays(5),
+                LocalDate.now().plusDays(8),
+                LocalDate.now().plusDays(12),
+                100.0,
+                110.0,
+                135,
+                135 * 110.0,
+                "₹500 Cr",
+                IpoStatus.UPCOMING,
+                "+₹15",
+                "N/A",
+                "KFintech"
+        );
+
+        String formatted = formatter.formatUpcomingIpos(List.of(upcoming));
 
         assertTrue(formatted.contains("Upcoming IPOs"));
-        assertTrue(formatted.contains("NTPCGREEN"));
+        assertTrue(formatted.contains("UPTECH"));
     }
 
     @Test

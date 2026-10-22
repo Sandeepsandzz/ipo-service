@@ -1,49 +1,78 @@
 package com.ipo.tracker.service;
 
+import com.ipo.tracker.client.NseLiveIpoClient;
 import com.ipo.tracker.model.Ipo;
 import com.ipo.tracker.model.IpoStatus;
 import com.ipo.tracker.model.IpoType;
-import com.ipo.tracker.repository.IpoRepository;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.stream.Collectors;
 
 @Service
 public class IpoService {
 
-    private final IpoRepository ipoRepository;
+    private final NseLiveIpoClient nseLiveClient;
 
-    public IpoService(IpoRepository ipoRepository) {
-        this.ipoRepository = ipoRepository;
+    public IpoService(NseLiveIpoClient nseLiveClient) {
+        this.nseLiveClient = nseLiveClient;
     }
 
+    /**
+     * Get all real-time IPOs currently available to apply as of today directly from NSE India.
+     */
     public List<Ipo> getActiveIpos() {
-        return ipoRepository.findActive(LocalDate.now());
+        return nseLiveClient.getLiveActiveIpos();
     }
 
     public List<Ipo> getActiveIpos(LocalDate asOfDate) {
-        return ipoRepository.findActive(asOfDate != null ? asOfDate : LocalDate.now());
+        return nseLiveClient.getLiveActiveIpos();
     }
 
+    /**
+     * Get real-time forthcoming/upcoming IPOs directly from NSE India.
+     */
     public List<Ipo> getUpcomingIpos() {
-        return ipoRepository.findUpcoming(LocalDate.now());
+        return nseLiveClient.getLiveUpcomingIpos();
     }
 
+    /**
+     * Get real-time recently closed IPOs directly from NSE India.
+     */
     public List<Ipo> getClosedIpos() {
-        return ipoRepository.findClosed(LocalDate.now());
+        return nseLiveClient.getLivePastIpos();
     }
 
+    /**
+     * Get all IPOs across active, upcoming, and closed with optional filtering.
+     */
     public List<Ipo> getAllIpos(IpoStatus status, IpoType type, String query) {
-        LocalDate today = LocalDate.now();
-        if (status == null && type == null && (query == null || query.isBlank())) {
-            return ipoRepository.findAll(today);
-        }
-        return ipoRepository.search(status, type, query, today);
+        List<Ipo> combined = new ArrayList<>();
+        combined.addAll(getActiveIpos());
+        combined.addAll(getUpcomingIpos());
+        combined.addAll(getClosedIpos());
+
+        return combined.stream()
+                .filter(ipo -> status == null || ipo.status() == status)
+                .filter(ipo -> type == null || ipo.issueType() == type)
+                .filter(ipo -> query == null || query.isBlank() ||
+                        ipo.companyName().toLowerCase().contains(query.toLowerCase()) ||
+                        ipo.symbol().toLowerCase().contains(query.toLowerCase()))
+                .collect(Collectors.toList());
     }
 
+    /**
+     * Find single IPO by ID or symbol.
+     */
     public Optional<Ipo> getIpoById(String id) {
-        return ipoRepository.findById(id, LocalDate.now());
+        if (id == null || id.isBlank()) return Optional.empty();
+        String cleanId = id.trim().toLowerCase();
+
+        return getAllIpos(null, null, null).stream()
+                .filter(ipo -> ipo.id().equalsIgnoreCase(cleanId) || ipo.symbol().equalsIgnoreCase(cleanId))
+                .findFirst();
     }
 }
