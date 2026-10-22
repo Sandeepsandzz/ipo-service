@@ -46,6 +46,7 @@ public class NseLiveIpoClient {
     private final ObjectMapper objectMapper;
     private final HttpClient httpClient;
     private final CookieManager cookieManager;
+    private final GmpLiveClient gmpLiveClient;
 
     private Instant lastHandshakeTime = Instant.EPOCH;
 
@@ -55,8 +56,9 @@ public class NseLiveIpoClient {
     private final List<Ipo> cachedPast = new CopyOnWriteArrayList<>();
     private Instant lastCacheUpdate = Instant.EPOCH;
 
-    public NseLiveIpoClient(ObjectMapper objectMapper) {
+    public NseLiveIpoClient(ObjectMapper objectMapper, GmpLiveClient gmpLiveClient) {
         this.objectMapper = objectMapper;
+        this.gmpLiveClient = gmpLiveClient;
         this.cookieManager = new CookieManager();
         this.httpClient = HttpClient.newBuilder()
                 .cookieHandler(cookieManager)
@@ -253,7 +255,7 @@ public class NseLiveIpoClient {
                 } catch (Exception ignored) {}
             }
 
-            String gmp = "Check Live Market";
+            String gmp = gmpLiveClient.getGmpForCompany(companyName, symbol);
 
             return new Ipo(
                     id,
