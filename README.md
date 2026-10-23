@@ -51,10 +51,14 @@ telegram.bot.username=MyIpoTrackerBot
 | Command / Button | Description |
 | :--- | :--- |
 | **`/start`** | Welcome message with interactive keyboard menu |
-| **`🟢 Active IPOs`** or **`/active`** | List all IPOs open to apply today with price band, lot size, GMP & subscription |
+| **`🟢 Active IPOs`** or **`/active`** | List all IPOs open today with quick 1-click company buttons |
 | **`📅 Upcoming IPOs`** or **`/upcoming`** | List upcoming IPOs and expected opening dates |
 | **`📊 Closed IPOs`** or **`/closed`** | List recently closed IPOs |
-| **`/ipo <symbol>`** | Detailed card for a specific IPO (e.g. `/ipo swiggy`, `/ipo acme`) |
+| **`/ipo <symbol>`** | Detailed card with interactive inline buttons |
+| **`🧮 Profit Calc` (Inline)** | Real-time listing gain calculation across 1, 2, 5 & 14 lots based on live GMP |
+| **`🎯 Apply Score` (Inline)** | Automated 0-100 rating based on GMP, QIB subscription & fundamentals |
+| **`📊 Subscription` (Inline)** | Live category-wise demand breakdown (QIB, Retail, NII) |
+| **`🏦 Registrar Link` (Inline)** | Direct 1-click external link to official allotment status portal |
 | **`❓ Help`** or **`/help`** | Full command reference |
 
 ---

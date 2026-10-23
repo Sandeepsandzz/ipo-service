@@ -94,6 +94,8 @@ public class TelegramBotService {
                         }
                         if (update.message() != null && update.message().text() != null) {
                             handleIncomingMessage(update.message());
+                        } else if (update.callbackQuery() != null) {
+                            handleCallbackQuery(update.callbackQuery());
                         }
                     }
                 }
@@ -124,13 +126,13 @@ public class TelegramBotService {
                 sendReply(chatId, formatter.formatWelcome(senderName), ReplyKeyboardMarkup.defaultMenu());
             } else if (text.startsWith("/active") || text.startsWith("/open") || text.contains("active ipo")) {
                 List<Ipo> active = ipoService.getActiveIpos();
-                sendReply(chatId, formatter.formatActiveIpos(active), ReplyKeyboardMarkup.defaultMenu());
+                sendReply(chatId, formatter.formatActiveIpos(active), formatter.createActiveIposKeyboard(active));
             } else if (text.startsWith("/upcoming") || text.contains("upcoming ipo")) {
                 List<Ipo> upcoming = ipoService.getUpcomingIpos();
-                sendReply(chatId, formatter.formatUpcomingIpos(upcoming), ReplyKeyboardMarkup.defaultMenu());
+                sendReply(chatId, formatter.formatUpcomingIpos(upcoming), formatter.createUpcomingIposKeyboard(upcoming));
             } else if (text.startsWith("/closed") || text.contains("closed ipo")) {
                 List<Ipo> closed = ipoService.getClosedIpos();
-                sendReply(chatId, formatter.formatClosedIpos(closed), ReplyKeyboardMarkup.defaultMenu());
+                sendReply(chatId, formatter.formatClosedIpos(closed), formatter.createClosedIposKeyboard());
             } else if (text.startsWith("/help") || text.equals("❓ help")) {
                 sendReply(chatId, formatter.formatHelp(), ReplyKeyboardMarkup.defaultMenu());
             } else if (text.startsWith("/ipo ") || text.startsWith("/search ")) {
@@ -140,11 +142,11 @@ public class TelegramBotService {
                 // Check if user typed a symbol or company name directly
                 Optional<Ipo> match = ipoService.getIpoById(rawText);
                 if (match.isPresent()) {
-                    sendReply(chatId, formatter.formatSingleIpo(match.get()), ReplyKeyboardMarkup.defaultMenu());
+                    sendReply(chatId, formatter.formatSingleIpo(match.get()), formatter.createSingleIpoKeyboard(match.get()));
                 } else {
                     List<Ipo> matches = ipoService.getAllIpos(null, null, rawText);
                     if (!matches.isEmpty()) {
-                        sendReply(chatId, formatter.formatActiveIpos(matches), ReplyKeyboardMarkup.defaultMenu());
+                        sendReply(chatId, formatter.formatActiveIpos(matches), formatter.createActiveIposKeyboard(matches));
                     } else {
                         String notFound = "🔍 No IPO found matching '<b>" + escapeHtml(rawText) + "</b>'.\n\n" +
                                 "Tap 🟢 <b>Active IPOs</b> or 📅 <b>Upcoming IPOs</b> below:";
@@ -158,6 +160,114 @@ public class TelegramBotService {
         }
     }
 
+    public void handleCallbackQuery(TelegramCallbackQuery callbackQuery) {
+        String queryId = callbackQuery.id();
+        String data = callbackQuery.data();
+        Long chatId = (callbackQuery.message() != null && callbackQuery.message().chat() != null)
+                ? callbackQuery.message().chat().id()
+                : null;
+
+        if (chatId == null || data == null) {
+            answerCallbackQuery(queryId, null, false);
+            return;
+        }
+
+        log.info("Received callback query from chatId {}: '{}'", chatId, data);
+
+        try {
+            if (data.startsWith("calc:")) {
+                answerCallbackQuery(queryId, "Calculating listing profit...", false);
+                String symbol = data.substring(5).trim();
+                Optional<Ipo> ipo = ipoService.getIpoById(symbol);
+                if (ipo.isPresent()) {
+                    sendReply(chatId, formatter.formatProfitCalculation(ipo.get()), formatter.createProfitCalcKeyboard(ipo.get()));
+                } else {
+                    sendReply(chatId, "⚠️ IPO details not found for symbol: " + symbol, null);
+                }
+            } else if (data.startsWith("score:")) {
+                answerCallbackQuery(queryId, "Evaluating Smart Score...", false);
+                String symbol = data.substring(6).trim();
+                Optional<Ipo> ipo = ipoService.getIpoById(symbol);
+                if (ipo.isPresent()) {
+                    sendReply(chatId, formatter.formatApplyScore(ipo.get()), formatter.createApplyScoreKeyboard(ipo.get()));
+                } else {
+                    sendReply(chatId, "⚠️ IPO details not found for symbol: " + symbol, null);
+                }
+            } else if (data.startsWith("sub:")) {
+                answerCallbackQuery(queryId, "Fetching subscription...", false);
+                String symbol = data.substring(4).trim();
+                Optional<Ipo> ipo = ipoService.getIpoById(symbol);
+                if (ipo.isPresent()) {
+                    sendReply(chatId, formatter.formatSubscriptionBreakdown(ipo.get()), formatter.createSubscriptionKeyboard(ipo.get()));
+                } else {
+                    sendReply(chatId, "⚠️ IPO details not found for symbol: " + symbol, null);
+                }
+            } else if (data.startsWith("reg:")) {
+                answerCallbackQuery(queryId, "Fetching registrar portal...", false);
+                String symbol = data.substring(4).trim();
+                Optional<Ipo> ipo = ipoService.getIpoById(symbol);
+                if (ipo.isPresent()) {
+                    sendReply(chatId, formatter.formatRegistrarDetails(ipo.get()), formatter.createRegistrarKeyboard(ipo.get()));
+                } else {
+                    sendReply(chatId, "⚠️ IPO details not found for symbol: " + symbol, null);
+                }
+            } else if (data.startsWith("ipo:")) {
+                answerCallbackQuery(queryId, "Loading IPO...", false);
+                String symbol = data.substring(4).trim();
+                Optional<Ipo> ipo = ipoService.getIpoById(symbol);
+                if (ipo.isPresent()) {
+                    sendReply(chatId, formatter.formatSingleIpo(ipo.get()), formatter.createSingleIpoKeyboard(ipo.get()));
+                } else {
+                    sendReply(chatId, "⚠️ IPO details not found for symbol: " + symbol, null);
+                }
+            } else if (data.startsWith("refresh:")) {
+                String symbol = data.substring(8).trim();
+                Optional<Ipo> ipo = ipoService.getIpoById(symbol);
+                if (ipo.isPresent()) {
+                    answerCallbackQuery(queryId, "Refreshed live data for " + symbol + "!", false);
+                    sendReply(chatId, formatter.formatSingleIpo(ipo.get()), formatter.createSingleIpoKeyboard(ipo.get()));
+                } else {
+                    answerCallbackQuery(queryId, "IPO not found", false);
+                }
+            } else if (data.equals("nav:active")) {
+                answerCallbackQuery(queryId, "Loading active IPOs...", false);
+                List<Ipo> active = ipoService.getActiveIpos();
+                sendReply(chatId, formatter.formatActiveIpos(active), formatter.createActiveIposKeyboard(active));
+            } else if (data.equals("nav:upcoming")) {
+                answerCallbackQuery(queryId, "Loading upcoming IPOs...", false);
+                List<Ipo> upcoming = ipoService.getUpcomingIpos();
+                sendReply(chatId, formatter.formatUpcomingIpos(upcoming), formatter.createUpcomingIposKeyboard(upcoming));
+            } else if (data.equals("nav:closed")) {
+                answerCallbackQuery(queryId, "Loading closed IPOs...", false);
+                List<Ipo> closed = ipoService.getClosedIpos();
+                sendReply(chatId, formatter.formatClosedIpos(closed), formatter.createClosedIposKeyboard());
+            } else {
+                answerCallbackQuery(queryId, null, false);
+            }
+        } catch (Exception e) {
+            log.error("Error handling callback query {}: {}", data, e.getMessage(), e);
+            answerCallbackQuery(queryId, "Error processing action", false);
+        }
+    }
+
+    public void answerCallbackQuery(String callbackQueryId, String text, boolean showAlert) {
+        if (!properties.hasValidToken() || callbackQueryId == null) {
+            return;
+        }
+        String url = TELEGRAM_API_BASE + properties.getToken() + "/answerCallbackQuery";
+        TelegramAnswerCallbackRequest request = new TelegramAnswerCallbackRequest(callbackQueryId, text, showAlert);
+        try {
+            restClient.post()
+                    .uri(url)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(request)
+                    .retrieve()
+                    .toBodilessEntity();
+        } catch (Exception e) {
+            log.debug("Failed to answer callback query {}: {}", callbackQueryId, e.getMessage());
+        }
+    }
+
     private void handleSearch(Long chatId, String query) {
         if (query.isBlank()) {
             sendReply(chatId, "Please specify an IPO symbol or company name, e.g. <code>/ipo swiggy</code>", null);
@@ -166,13 +276,13 @@ public class TelegramBotService {
 
         Optional<Ipo> exactMatch = ipoService.getIpoById(query);
         if (exactMatch.isPresent()) {
-            sendReply(chatId, formatter.formatSingleIpo(exactMatch.get()), ReplyKeyboardMarkup.defaultMenu());
+            sendReply(chatId, formatter.formatSingleIpo(exactMatch.get()), formatter.createSingleIpoKeyboard(exactMatch.get()));
             return;
         }
 
         List<Ipo> matches = ipoService.getAllIpos(null, null, query);
         if (!matches.isEmpty()) {
-            sendReply(chatId, formatter.formatActiveIpos(matches), ReplyKeyboardMarkup.defaultMenu());
+            sendReply(chatId, formatter.formatActiveIpos(matches), formatter.createActiveIposKeyboard(matches));
         } else {
             sendReply(chatId, "🔍 No IPO found matching '<b>" + escapeHtml(query) + "</b>'.", ReplyKeyboardMarkup.defaultMenu());
         }
