@@ -133,6 +133,10 @@ public class TelegramBotService {
             } else if (text.startsWith("/closed") || text.contains("closed ipo")) {
                 List<Ipo> closed = ipoService.getClosedIpos();
                 sendReply(chatId, formatter.formatClosedIpos(closed), formatter.createClosedIposKeyboard());
+            } else if (text.startsWith("/odds") || text.equals("🎲 allotment odds")) {
+                handleOddsCommand(chatId, rawText);
+            } else if (text.startsWith("/calc") || text.equals("🧮 profit calculator")) {
+                handleCalcCommand(chatId, rawText);
             } else if (text.startsWith("/help") || text.equals("❓ help")) {
                 sendReply(chatId, formatter.formatHelp(), ReplyKeyboardMarkup.defaultMenu());
             } else if (text.startsWith("/ipo ") || text.startsWith("/search ")) {
@@ -149,7 +153,7 @@ public class TelegramBotService {
                         sendReply(chatId, formatter.formatActiveIpos(matches), formatter.createActiveIposKeyboard(matches));
                     } else {
                         String notFound = "🔍 No IPO found matching '<b>" + escapeHtml(rawText) + "</b>'.\n\n" +
-                                "Tap 🟢 <b>Active IPOs</b> or 📅 <b>Upcoming IPOs</b> below:";
+                                "Tap 🟢 <b>Active IPOs</b> or 🎲 <b>Allotment Odds</b> below:";
                         sendReply(chatId, notFound, ReplyKeyboardMarkup.defaultMenu());
                     }
                 }
@@ -157,6 +161,62 @@ public class TelegramBotService {
         } catch (Exception e) {
             log.error("Failed to process message from chatId {}: {}", chatId, e.getMessage(), e);
             sendReply(chatId, "⚠️ An error occurred while retrieving IPO details. Please try again.", null);
+        }
+    }
+
+    private void handleOddsCommand(Long chatId, String rawText) {
+        String[] parts = rawText.trim().split("\\s+");
+        if (parts.length == 1) {
+            List<Ipo> active = ipoService.getActiveIpos();
+            if (active.isEmpty()) {
+                sendReply(chatId, "🎲 <b>Multi-PAN Allotment Odds Calculator</b>\n\nNo IPOs currently open. Try typing: <code>/odds &lt;symbol&gt; [pans]</code>, e.g. <code>/odds swiggy 3</code>", ReplyKeyboardMarkup.defaultMenu());
+                return;
+            }
+            sendReply(chatId, "🎲 <b>Multi-PAN Allotment Odds Calculator</b>\n\nSelect an active IPO below to view allotment probabilities across family accounts, or type <code>/odds &lt;symbol&gt; [pans]</code>:\n", formatter.createActiveIposKeyboard(active));
+            return;
+        }
+
+        String query = parts[1].trim();
+        int pans = 0;
+        if (parts.length >= 3) {
+            try {
+                pans = Integer.parseInt(parts[2].trim());
+            } catch (Exception ignored) {}
+        }
+
+        Optional<Ipo> ipo = ipoService.getIpoById(query);
+        if (ipo.isPresent()) {
+            sendReply(chatId, formatter.formatMultiPanOdds(ipo.get(), pans), formatter.createMultiPanOddsKeyboard(ipo.get(), pans));
+        } else {
+            sendReply(chatId, "🔍 No IPO found matching '<b>" + escapeHtml(query) + "</b>' for odds calculation. Example: <code>/odds swiggy 3</code>", ReplyKeyboardMarkup.defaultMenu());
+        }
+    }
+
+    private void handleCalcCommand(Long chatId, String rawText) {
+        String[] parts = rawText.trim().split("\\s+");
+        if (parts.length == 1) {
+            List<Ipo> active = ipoService.getActiveIpos();
+            if (active.isEmpty()) {
+                sendReply(chatId, "🧮 <b>Listing Profit Calculator</b>\n\nNo IPOs currently open. Try typing: <code>/calc &lt;symbol&gt; [lots]</code>, e.g. <code>/calc swiggy 2</code>", ReplyKeyboardMarkup.defaultMenu());
+                return;
+            }
+            sendReply(chatId, "🧮 <b>Listing Profit Calculator</b>\n\nSelect an active IPO below to calculate listing gains, or type <code>/calc &lt;symbol&gt; [lots]</code> (e.g. <code>/calc swiggy 5</code>):\n", formatter.createActiveIposKeyboard(active));
+            return;
+        }
+
+        String query = parts[1].trim();
+        int lots = 0;
+        if (parts.length >= 3) {
+            try {
+                lots = Integer.parseInt(parts[2].trim());
+            } catch (Exception ignored) {}
+        }
+
+        Optional<Ipo> ipo = ipoService.getIpoById(query);
+        if (ipo.isPresent()) {
+            sendReply(chatId, formatter.formatProfitCalculation(ipo.get(), lots), formatter.createProfitCalcKeyboard(ipo.get(), lots));
+        } else {
+            sendReply(chatId, "🔍 No IPO found matching '<b>" + escapeHtml(query) + "</b>' for profit calculation. Example: <code>/calc swiggy 2</code>", ReplyKeyboardMarkup.defaultMenu());
         }
     }
 
@@ -176,11 +236,34 @@ public class TelegramBotService {
 
         try {
             if (data.startsWith("calc:")) {
-                answerCallbackQuery(queryId, "Calculating listing profit...", false);
-                String symbol = data.substring(5).trim();
+                String remainder = data.substring(5).trim();
+                String symbol = remainder;
+                int lots = 0;
+                if (remainder.contains(":")) {
+                    String[] split = remainder.split(":");
+                    symbol = split[0];
+                    try { lots = Integer.parseInt(split[1]); } catch (Exception ignored) {}
+                }
+                answerCallbackQuery(queryId, lots > 0 ? "Calculating for " + lots + " lot(s)..." : "Calculating listing profit...", false);
                 Optional<Ipo> ipo = ipoService.getIpoById(symbol);
                 if (ipo.isPresent()) {
-                    sendReply(chatId, formatter.formatProfitCalculation(ipo.get()), formatter.createProfitCalcKeyboard(ipo.get()));
+                    sendReply(chatId, formatter.formatProfitCalculation(ipo.get(), lots), formatter.createProfitCalcKeyboard(ipo.get(), lots));
+                } else {
+                    sendReply(chatId, "⚠️ IPO details not found for symbol: " + symbol, null);
+                }
+            } else if (data.startsWith("odds:")) {
+                String remainder = data.substring(5).trim();
+                String symbol = remainder;
+                int pans = 0;
+                if (remainder.contains(":")) {
+                    String[] split = remainder.split(":");
+                    symbol = split[0];
+                    try { pans = Integer.parseInt(split[1]); } catch (Exception ignored) {}
+                }
+                answerCallbackQuery(queryId, pans > 0 ? "Simulating for " + pans + " family PAN(s)..." : "Calculating allotment odds...", false);
+                Optional<Ipo> ipo = ipoService.getIpoById(symbol);
+                if (ipo.isPresent()) {
+                    sendReply(chatId, formatter.formatMultiPanOdds(ipo.get(), pans), formatter.createMultiPanOddsKeyboard(ipo.get(), pans));
                 } else {
                     sendReply(chatId, "⚠️ IPO details not found for symbol: " + symbol, null);
                 }

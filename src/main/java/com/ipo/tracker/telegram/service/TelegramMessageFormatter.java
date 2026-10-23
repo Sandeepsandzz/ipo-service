@@ -29,6 +29,8 @@ public class TelegramMessageFormatter {
             <b>Quick Commands:</b>
             🟢 <b>/active</b> - View IPOs open to apply today
             📅 <b>/upcoming</b> - View upcoming IPO announcements
+            🎲 <b>/odds &lt;name&gt; [pans]</b> - Multi-PAN allotment probability calculator (e.g. <code>/odds swiggy 3</code>)
+            🧮 <b>/calc &lt;name&gt; [lots]</b> - Listing profit calculator (e.g. <code>/calc swiggy 2</code>)
             📊 <b>/closed</b> - View recently closed IPOs
             🔍 <b>/ipo &lt;name&gt;</b> - Search details of an IPO (e.g. <code>/ipo swiggy</code>)
             ❓ <b>/help</b> - Show full command guide
@@ -58,7 +60,7 @@ public class TelegramMessageFormatter {
             sb.append("🏦 <b>Registrar:</b> ").append(ipo.registrar()).append("\n\n");
         }
 
-        sb.append("<i>💡 Tap any IPO button below for 1-click Profit Calc, Apply Score & details!</i>");
+        sb.append("<i>💡 Tap any IPO button below for 1-click Profit Calc, Multi-PAN Odds & details!</i>");
         return sb.toString();
     }
 
@@ -210,20 +212,27 @@ public class TelegramMessageFormatter {
     public InlineKeyboardMarkup createSingleIpoKeyboard(Ipo ipo) {
         List<InlineKeyboardButton> row1 = List.of(
             InlineKeyboardButton.callback("🧮 Profit Calc", "calc:" + ipo.symbol()),
-            InlineKeyboardButton.callback("🎯 Apply Score", "score:" + ipo.symbol())
+            InlineKeyboardButton.callback("🎲 Multi-PAN Odds", "odds:" + ipo.symbol())
         );
         List<InlineKeyboardButton> row2 = List.of(
-            InlineKeyboardButton.callback("📊 Subscription", "sub:" + ipo.symbol()),
-            InlineKeyboardButton.callback("🏦 Registrar Link", "reg:" + ipo.symbol())
+            InlineKeyboardButton.callback("🎯 Apply Score", "score:" + ipo.symbol()),
+            InlineKeyboardButton.callback("📊 Subscription", "sub:" + ipo.symbol())
         );
         List<InlineKeyboardButton> row3 = List.of(
-            InlineKeyboardButton.callback("🔄 Refresh", "refresh:" + ipo.symbol()),
+            InlineKeyboardButton.callback("🏦 Registrar Link", "reg:" + ipo.symbol()),
+            InlineKeyboardButton.callback("🔄 Refresh", "refresh:" + ipo.symbol())
+        );
+        List<InlineKeyboardButton> row4 = List.of(
             InlineKeyboardButton.callback("🟢 Active List", "nav:active")
         );
-        return InlineKeyboardMarkup.of(List.of(row1, row2, row3));
+        return InlineKeyboardMarkup.of(List.of(row1, row2, row3, row4));
     }
 
     public String formatProfitCalculation(Ipo ipo) {
+        return formatProfitCalculation(ipo, 0);
+    }
+
+    public String formatProfitCalculation(Ipo ipo, int customLots) {
         double gmpVal = extractGmpValue(ipo.gmp());
         int lotSize = ipo.lotSize() > 0 ? ipo.lotSize() : 1;
         double price = ipo.maxPrice() > 0 ? ipo.maxPrice() : (ipo.minPrice() > 0 ? ipo.minPrice() : 100.0);
@@ -231,13 +240,55 @@ public class TelegramMessageFormatter {
         double estListingPrice = price + gmpVal;
         double gainPct = price > 0 ? (gmpVal / price) * 100 : 0;
 
+        String prefix = gmpVal >= 0 ? "+" : "";
+        String listingDateStr = ipo.listingDate() != null ? ipo.listingDate().format(DATE_FMT) : "listing day";
+
+        if (customLots > 0) {
+            int totalShares = customLots * lotSize;
+            double totalOutlay = customLots * minInv;
+            double totalProfit = totalShares * gmpVal;
+            String category = customLots >= 14 ? "sHNI Quota (₹2L - ₹10L)" : "Retail Quota";
+
+            return """
+                🧮 <b>Listing Profit Calculation: %d Lot(s)</b>
+                🏢 <b>%s (%s)</b>
+                ━━━━━━━━━━━━━━━━━━━━
+                🏷 <b>Application Type:</b> %s
+                📦 <b>Total Shares:</b> %d shares (%d lots × %d)
+                💰 <b>Cut-off Price:</b> ₹%.2f
+                💵 <b>Total Capital Required:</b> ₹%,.0f
+
+                📈 <b>Current GMP:</b> <code>%s</code>
+                🎯 <b>Estimated Listing Price:</b> ₹%.2f (%s%.2f%%)
+
+                ━━━━━━━━━━━━━━━━━━━━
+                💰 <b>Estimated Net Listing Profit:</b> <b>%s₹%,.0f</b>
+
+                <i>⚠️ Note: Listing gains depend on market momentum on %s.</i>
+                """.formatted(
+                    customLots,
+                    ipo.companyName(),
+                    ipo.symbol(),
+                    category,
+                    totalShares,
+                    customLots,
+                    lotSize,
+                    price,
+                    totalOutlay,
+                    ipo.gmp(),
+                    estListingPrice,
+                    prefix,
+                    gainPct,
+                    prefix,
+                    totalProfit,
+                    listingDateStr
+            );
+        }
+
         double profit1Lot = lotSize * gmpVal;
         double profit2Lots = 2 * lotSize * gmpVal;
         double profit5Lots = 5 * lotSize * gmpVal;
         double profit14Lots = 14 * lotSize * gmpVal;
-
-        String prefix = gmpVal >= 0 ? "+" : "";
-        String listingDateStr = ipo.listingDate() != null ? ipo.listingDate().format(DATE_FMT) : "listing day";
 
         String priceFormatted = String.format("%.2f", price);
         String minInvFormatted = String.format("%,.0f", minInv);
@@ -267,7 +318,7 @@ public class TelegramMessageFormatter {
             • <b>5 Lots (%d shares):</b> <code>%s</code>
             • <b>14 Lots (sHNI quota):</b> <code>%s</code>
 
-            <i>⚠️ Note: GMP is an unlisted indicator. Actual listing price on %s depends on stock market momentum.</i>
+            <i>👇 Tap a button below to simulate custom lot sizes:</i>
             """.formatted(
                 ipo.companyName(),
                 ipo.symbol(),
@@ -284,22 +335,163 @@ public class TelegramMessageFormatter {
                 5 * lotSize,
                 profit5Formatted,
                 14 * lotSize,
-                profit14Formatted,
-                listingDateStr
+                profit14Formatted
         );
     }
 
     public InlineKeyboardMarkup createProfitCalcKeyboard(Ipo ipo) {
+        return createProfitCalcKeyboard(ipo, 0);
+    }
+
+    public InlineKeyboardMarkup createProfitCalcKeyboard(Ipo ipo, int currentLots) {
         return InlineKeyboardMarkup.of(List.of(
             List.of(
-                InlineKeyboardButton.callback("🎯 Apply Score", "score:" + ipo.symbol()),
-                InlineKeyboardButton.callback("📊 Subscription", "sub:" + ipo.symbol())
+                InlineKeyboardButton.callback(currentLots == 1 ? "✅ 1 Lot" : "1 Lot", "calc:" + ipo.symbol() + ":1"),
+                InlineKeyboardButton.callback(currentLots == 2 ? "✅ 2 Lots" : "2 Lots", "calc:" + ipo.symbol() + ":2"),
+                InlineKeyboardButton.callback(currentLots == 5 ? "✅ 5 Lots" : "5 Lots", "calc:" + ipo.symbol() + ":5"),
+                InlineKeyboardButton.callback(currentLots == 14 ? "✅ 14 Lots (HNI)" : "14 Lots (HNI)", "calc:" + ipo.symbol() + ":14")
+            ),
+            List.of(
+                InlineKeyboardButton.callback("🎲 Multi-PAN Odds", "odds:" + ipo.symbol()),
+                InlineKeyboardButton.callback("🎯 Apply Score", "score:" + ipo.symbol())
             ),
             List.of(
                 InlineKeyboardButton.callback("🏦 Registrar", "reg:" + ipo.symbol()),
                 InlineKeyboardButton.callback("⬅️ Back to " + ipo.symbol(), "ipo:" + ipo.symbol())
             )
         ));
+    }
+
+    public String formatMultiPanOdds(Ipo ipo, int specificPanCount) {
+        double retailSub = extractRetailSubscriptionMultiple(ipo.subscriptionStatus());
+        double gmpVal = extractGmpValue(ipo.gmp());
+        int lotSize = ipo.lotSize() > 0 ? ipo.lotSize() : 1;
+        double price = ipo.maxPrice() > 0 ? ipo.maxPrice() : (ipo.minPrice() > 0 ? ipo.minPrice() : 100.0);
+        double minInv = lotSize * price;
+        double profitPerLot = lotSize * gmpVal;
+        String profitPerLotFormatted = String.format("%s₹%,.0f", gmpVal >= 0 ? "+" : "", profitPerLot);
+
+        if (specificPanCount > 0) {
+            int n = specificPanCount;
+            double p1 = Math.min(1.0, 1.0 / Math.max(0.01, retailSub));
+            double pWin = (1.0 - Math.pow(1.0 - p1, n)) * 100.0;
+            pWin = Math.min(100.0, Math.max(0.1, pWin));
+            double totalCapital = n * minInv;
+            double expectedProfit = (n * p1) * profitPerLot;
+
+            String oddsDesc = pWin >= 99.0 ? "Almost Guaranteed (>99%)" : String.format("1 in %.1f chance", 100.0 / pWin);
+
+            return """
+                🎲 <b>Allotment Odds Simulation: %d Family PANs</b>
+                🏢 <b>%s (%s)</b>
+                ━━━━━━━━━━━━━━━━━━━━
+                📊 <b>Retail Demand:</b> <code>%.2fx</code>
+                💵 <b>Total Capital Blocked:</b> ₹%,.0f (%d lots × ₹%,.0f)
+                📈 <b>Current GMP:</b> <code>%s</code>
+                💰 <b>Listing Profit per Winning Lot:</b> %s
+
+                ━━━━━━━━━━━━━━━━━━━━
+                🎯 <b>Allotment Probability:</b>
+                • <b>Chance of at least 1 Allotment:</b> <b>%.1f%%</b> (<b>%s</b>)
+                • <b>Chance of Missing Allotment (0 lots):</b> <b>%.1f%%</b>
+
+                <b>Outlay vs Return Scenarios:</b>
+                • If <b>1 Lot</b> wins: %s (Net return: %.1f%% on capital)
+                • If <b>2 Lots</b> win: %s
+                • <b>Statistically Expected Profit:</b> <b>%s₹%,.0f</b>
+
+                💡 <b>SEBI Application Rule:</b>
+                <i>Unallotted application funds are automatically unblocked/refunded via your UPI mandate within 24 hours of the allotment date.</i>
+                """.formatted(
+                    n,
+                    ipo.companyName(),
+                    ipo.symbol(),
+                    retailSub,
+                    totalCapital,
+                    n,
+                    minInv,
+                    ipo.gmp(),
+                    profitPerLotFormatted,
+                    pWin,
+                    oddsDesc,
+                    Math.max(0.0, 100.0 - pWin),
+                    profitPerLotFormatted,
+                    totalCapital > 0 ? (profitPerLot / totalCapital) * 100.0 : 0.0,
+                    String.format("%s₹%,.0f", gmpVal >= 0 ? "+" : "", 2 * profitPerLot),
+                    gmpVal >= 0 ? "+" : "",
+                    expectedProfit
+            );
+        } else {
+            double p1 = Math.min(1.0, 1.0 / Math.max(0.01, retailSub));
+            double p1Pct = p1 * 100.0;
+            double p2Pct = (1.0 - Math.pow(1.0 - p1, 2)) * 100.0;
+            double p3Pct = (1.0 - Math.pow(1.0 - p1, 3)) * 100.0;
+            double p5Pct = (1.0 - Math.pow(1.0 - p1, 5)) * 100.0;
+            double p7Pct = (1.0 - Math.pow(1.0 - p1, 7)) * 100.0;
+
+            return """
+                🎲 <b>Multi-PAN Allotment Odds Calculator</b>
+                🏢 <b>%s (%s)</b>
+                ━━━━━━━━━━━━━━━━━━━━
+                📊 <b>Retail Demand:</b> <code>%.2fx</code>
+                📦 <b>1 Retail Lot:</b> %d shares (₹%,.0f)
+                📈 <b>Current GMP:</b> <code>%s</code>
+                💰 <b>Profit per Winning Lot:</b> %s
+
+                ━━━━━━━━━━━━━━━━━━━━
+                👨‍👩‍👧‍👦 <b>Family PAN Odds Comparison (At Least 1 Lot):</b>
+                • <b>1 PAN:</b> <code>%.1f%%</code> (%s) | ₹%,.0f
+                • <b>2 PANs:</b> <code>%.1f%%</code> (%s) | ₹%,.0f
+                • <b>3 PANs:</b> <code>%.1f%%</code> (%s) | ₹%,.0f
+                • <b>5 PANs:</b> <code>%.1f%%</code> (%s) | ₹%,.0f
+                • <b>7 PANs:</b> <code>%.1f%%</code> (%s) | ₹%,.0f
+
+                💡 <b>Why Multi-PAN Strategy Works:</b>
+                <i>Under SEBI retail allotment rules, allotment is done by computer lottery per unique PAN. Bidding for 2+ lots on ONE PAN does not increase your lottery chances. Always apply 1 lot across different family PAN cards!</i>
+
+                <i>👇 Tap any PAN button below for a detailed simulation:</i>
+                """.formatted(
+                    ipo.companyName(),
+                    ipo.symbol(),
+                    retailSub,
+                    lotSize,
+                    minInv,
+                    ipo.gmp(),
+                    profitPerLotFormatted,
+                    p1Pct, p1Pct >= 99.0 ? "Guaranteed" : String.format("1 in %.1f", 100.0 / p1Pct), minInv,
+                    p2Pct, p2Pct >= 99.0 ? "Guaranteed" : String.format("1 in %.1f", 100.0 / p2Pct), 2 * minInv,
+                    p3Pct, p3Pct >= 99.0 ? "Guaranteed" : String.format("1 in %.1f", 100.0 / p3Pct), 3 * minInv,
+                    p5Pct, p5Pct >= 99.0 ? "Guaranteed" : String.format("1 in %.1f", 100.0 / p5Pct), 5 * minInv,
+                    p7Pct, p7Pct >= 99.0 ? "Guaranteed" : String.format("1 in %.1f", 100.0 / p7Pct), 7 * minInv
+            );
+        }
+    }
+
+    public InlineKeyboardMarkup createMultiPanOddsKeyboard(Ipo ipo) {
+        return createMultiPanOddsKeyboard(ipo, 0);
+    }
+
+    public InlineKeyboardMarkup createMultiPanOddsKeyboard(Ipo ipo, int currentPans) {
+        List<List<InlineKeyboardButton>> rows = new ArrayList<>();
+        rows.add(List.of(
+            InlineKeyboardButton.callback(currentPans == 1 ? "✅ 1 PAN" : "1 PAN", "odds:" + ipo.symbol() + ":1"),
+            InlineKeyboardButton.callback(currentPans == 2 ? "✅ 2 PANs" : "2 PANs", "odds:" + ipo.symbol() + ":2"),
+            InlineKeyboardButton.callback(currentPans == 3 ? "✅ 3 PANs" : "3 PANs", "odds:" + ipo.symbol() + ":3")
+        ));
+        rows.add(List.of(
+            InlineKeyboardButton.callback(currentPans == 4 ? "✅ 4 PANs" : "4 PANs", "odds:" + ipo.symbol() + ":4"),
+            InlineKeyboardButton.callback(currentPans == 5 ? "✅ 5 PANs" : "5 PANs", "odds:" + ipo.symbol() + ":5"),
+            InlineKeyboardButton.callback(currentPans == 7 ? "✅ 7 PANs" : "7 PANs", "odds:" + ipo.symbol() + ":7")
+        ));
+        rows.add(List.of(
+            InlineKeyboardButton.callback("🧮 Profit Calc", "calc:" + ipo.symbol()),
+            InlineKeyboardButton.callback("🎯 Apply Score", "score:" + ipo.symbol())
+        ));
+        rows.add(List.of(
+            InlineKeyboardButton.callback("📊 Odds Table", "odds:" + ipo.symbol() + ":0"),
+            InlineKeyboardButton.callback("⬅️ Back to " + ipo.symbol(), "ipo:" + ipo.symbol())
+        ));
+        return InlineKeyboardMarkup.of(rows);
     }
 
     public String formatApplyScore(Ipo ipo) {
@@ -369,7 +561,7 @@ public class TelegramMessageFormatter {
         return InlineKeyboardMarkup.of(List.of(
             List.of(
                 InlineKeyboardButton.callback("🧮 Profit Calc", "calc:" + ipo.symbol()),
-                InlineKeyboardButton.callback("📊 Subscription", "sub:" + ipo.symbol())
+                InlineKeyboardButton.callback("🎲 Multi-PAN Odds", "odds:" + ipo.symbol())
             ),
             List.of(
                 InlineKeyboardButton.callback("🏦 Registrar", "reg:" + ipo.symbol()),
@@ -411,11 +603,11 @@ public class TelegramMessageFormatter {
         return InlineKeyboardMarkup.of(List.of(
             List.of(
                 InlineKeyboardButton.callback("🧮 Profit Calc", "calc:" + ipo.symbol()),
-                InlineKeyboardButton.callback("🎯 Apply Score", "score:" + ipo.symbol())
+                InlineKeyboardButton.callback("🎲 Multi-PAN Odds", "odds:" + ipo.symbol())
             ),
             List.of(
-                InlineKeyboardButton.callback("⬅️ Back to " + ipo.symbol(), "ipo:" + ipo.symbol()),
-                InlineKeyboardButton.callback("🟢 Active List", "nav:active")
+                InlineKeyboardButton.callback("🎯 Apply Score", "score:" + ipo.symbol()),
+                InlineKeyboardButton.callback("⬅️ Back to " + ipo.symbol(), "ipo:" + ipo.symbol())
             )
         ));
     }
@@ -460,7 +652,7 @@ public class TelegramMessageFormatter {
 
         rows.add(List.of(
             InlineKeyboardButton.callback("🧮 Profit Calc", "calc:" + ipo.symbol()),
-            InlineKeyboardButton.callback("🎯 Apply Score", "score:" + ipo.symbol())
+            InlineKeyboardButton.callback("🎲 Multi-PAN Odds", "odds:" + ipo.symbol())
         ));
         rows.add(List.of(
             InlineKeyboardButton.callback("⬅️ Back to " + ipo.symbol(), "ipo:" + ipo.symbol())
@@ -488,6 +680,23 @@ public class TelegramMessageFormatter {
             return "https://purvashare.com/queries/";
         }
         return "https://www.bseindia.com/investors/appli_check.aspx";
+    }
+
+    public double extractRetailSubscriptionMultiple(String subscription) {
+        if (subscription == null || subscription.isBlank()) return 1.0;
+        try {
+            Matcher mRetail = Pattern.compile("retail\\s*:\\s*(\\d+(?:\\.\\d+)?)\\s*x", Pattern.CASE_INSENSITIVE)
+                    .matcher(subscription);
+            if (mRetail.find()) {
+                return Double.parseDouble(mRetail.group(1));
+            }
+            Matcher mOverall = Pattern.compile("(\\d+(?:\\.\\d+)?)\\s*x", Pattern.CASE_INSENSITIVE)
+                    .matcher(subscription);
+            if (mOverall.find()) {
+                return Double.parseDouble(mOverall.group(1));
+            }
+        } catch (Exception ignored) {}
+        return 1.0;
     }
 
     private double extractGmpValue(String gmp) {
@@ -520,16 +729,18 @@ public class TelegramMessageFormatter {
             <b>Commands:</b>
             • <b>/start</b> - Open main menu & keyboard
             • <b>/active</b> or <b>/open</b> - List all IPOs open today with interactive buttons
-            • <b>/upcoming</b> - List upcoming IPOs
+            • <b>/upcoming</b> - List upcoming IPO announcements
+            • <b>/odds &lt;name&gt; [pans]</b> - Multi-PAN allotment probability calculator (e.g. <code>/odds swiggy 3</code>)
+            • <b>/calc &lt;name&gt; [lots]</b> - Listing profit calculator (e.g. <code>/calc swiggy 2</code>)
             • <b>/closed</b> - List recently closed IPOs
             • <b>/ipo &lt;symbol&gt;</b> - Search for a specific IPO (e.g. <code>/ipo swiggy</code>)
             • <b>/help</b> - Show this message
 
-            <b>Interactive Features:</b>
-            • <b>🧮 Profit Calc</b>: Calculates estimated listing profit across 1, 2, 5 & 14 lots based on live GMP.
-            • <b>🎯 Apply Score</b>: Heuristic rating (0-100) based on GMP, QIB demand & fundamentals.
-            • <b>🏦 Registrar Link</b>: Direct 1-click link to official allotment status portals.
-            • <b>🏢 Quick Buttons</b>: Tap any company symbol button for instant access!
+            <b>Interactive Tools:</b>
+            • <b>🎲 Multi-PAN Odds</b>: Calculates your family allotment probability across 1, 2, 3, 5 & 7 PAN cards using SEBI retail lottery rules.
+            • <b>🧮 Profit Calc</b>: Calculates estimated listing gains across custom lot sizes (1, 2, 5 & 14 lots).
+            • <b>🎯 Apply Score</b>: Automated 0-100 score based on GMP, QIB backing & issue type.
+            • <b>🏦 Registrar Link</b>: Direct 1-click links to official allotment portals (MUFG, KFintech, Bigshare & BSE India).
             """;
     }
 }

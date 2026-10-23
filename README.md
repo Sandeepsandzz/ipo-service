@@ -53,12 +53,13 @@ telegram.bot.username=MyIpoTrackerBot
 | **`/start`** | Welcome message with interactive keyboard menu |
 | **`🟢 Active IPOs`** or **`/active`** | List all IPOs open today with quick 1-click company buttons |
 | **`📅 Upcoming IPOs`** or **`/upcoming`** | List upcoming IPOs and expected opening dates |
+| **`🎲 Allotment Odds`** or **`/odds [name] [pans]`** | **Multi-PAN Allotment Odds Calculator** across family PAN cards (e.g. `/odds swiggy 3`) |
+| **`🧮 Profit Calculator`** or **`/calc [name] [lots]`** | **Custom Listing Profit Estimator** for 1, 2, 5 & 14 lots (e.g. `/calc swiggy 5`) |
 | **`📊 Closed IPOs`** or **`/closed`** | List recently closed IPOs |
 | **`/ipo <symbol>`** | Detailed card with interactive inline buttons |
-| **`🧮 Profit Calc` (Inline)** | Real-time listing gain calculation across 1, 2, 5 & 14 lots based on live GMP |
 | **`🎯 Apply Score` (Inline)** | Automated 0-100 rating based on GMP, QIB subscription & fundamentals |
 | **`📊 Subscription` (Inline)** | Live category-wise demand breakdown (QIB, Retail, NII) |
-| **`🏦 Registrar Link` (Inline)** | Direct 1-click external link to official allotment status portal |
+| **`🏦 Registrar Link` (Inline)** | Direct 1-click verified link to MUFG Intime, KFintech & BSE India |
 | **`❓ Help`** or **`/help`** | Full command reference |
 
 ---

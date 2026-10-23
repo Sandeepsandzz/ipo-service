@@ -53,7 +53,7 @@ class TelegramBotServiceTest {
                 "₹1,500 Cr",
                 IpoStatus.OPEN,
                 "+₹50 (9.6%)",
-                "2.5x overall",
+                "2.5x (Retail: 3.50x, QIB: 4.20x, NII: 1.80x)",
                 "Link Intime India Pvt Ltd"
         );
     }
@@ -103,12 +103,11 @@ class TelegramBotServiceTest {
         assertNotNull(keyboard.inlineKeyboard());
         assertFalse(keyboard.inlineKeyboard().isEmpty());
 
-        // Verify action buttons exist
         List<InlineKeyboardButton> row1 = keyboard.inlineKeyboard().get(0);
         assertEquals("🧮 Profit Calc", row1.get(0).text());
         assertEquals("calc:SAMPLE", row1.get(0).callbackData());
-        assertEquals("🎯 Apply Score", row1.get(1).text());
-        assertEquals("score:SAMPLE", row1.get(1).callbackData());
+        assertEquals("🎲 Multi-PAN Odds", row1.get(1).text());
+        assertEquals("odds:SAMPLE", row1.get(1).callbackData());
     }
 
     @Test
@@ -121,6 +120,45 @@ class TelegramBotServiceTest {
 
         InlineKeyboardMarkup markup = formatter.createProfitCalcKeyboard(sampleIpo);
         assertNotNull(markup);
+    }
+
+    @Test
+    void testCustomLotProfitCalculation() {
+        String customLotsText = formatter.formatProfitCalculation(sampleIpo, 5);
+        assertNotNull(customLotsText);
+        assertTrue(customLotsText.contains("5 Lot(s)"));
+        assertTrue(customLotsText.contains("Estimated Net Listing Profit:"));
+
+        InlineKeyboardMarkup markup = formatter.createProfitCalcKeyboard(sampleIpo, 5);
+        assertNotNull(markup);
+        assertEquals("✅ 5 Lots", markup.inlineKeyboard().get(0).get(2).text());
+    }
+
+    @Test
+    void testMultiPanOddsTable() {
+        String oddsText = formatter.formatMultiPanOdds(sampleIpo, 0);
+        assertNotNull(oddsText);
+        assertTrue(oddsText.contains("Multi-PAN Allotment Odds Calculator"));
+        assertTrue(oddsText.contains("1 PAN:"));
+        assertTrue(oddsText.contains("3 PANs:"));
+        assertTrue(oddsText.contains("5 PANs:"));
+        assertTrue(oddsText.contains("SEBI"));
+
+        InlineKeyboardMarkup markup = formatter.createMultiPanOddsKeyboard(sampleIpo, 0);
+        assertNotNull(markup);
+    }
+
+    @Test
+    void testMultiPanOddsSpecificCount() {
+        String oddsSimText = formatter.formatMultiPanOdds(sampleIpo, 3);
+        assertNotNull(oddsSimText);
+        assertTrue(oddsSimText.contains("3 Family PANs"));
+        assertTrue(oddsSimText.contains("Chance of at least 1 Allotment:"));
+        assertTrue(oddsSimText.contains("Capital Blocked:"));
+
+        InlineKeyboardMarkup markup = formatter.createMultiPanOddsKeyboard(sampleIpo, 3);
+        assertNotNull(markup);
+        assertEquals("✅ 3 PANs", markup.inlineKeyboard().get(0).get(2).text());
     }
 
     @Test
@@ -152,9 +190,11 @@ class TelegramBotServiceTest {
     void testHandleIncomingMessageWithoutTokenDoesNotThrow() {
         TelegramChat chat = new TelegramChat(123456789L, "private", null, "testuser", "Test");
         TelegramUser user = new TelegramUser(123456789L, false, "Test", "User", "testuser");
-        TelegramMessage message = new TelegramMessage(1L, user, chat, 1729600000L, "/active");
 
-        assertDoesNotThrow(() -> botService.handleIncomingMessage(message));
+        assertDoesNotThrow(() -> botService.handleIncomingMessage(new TelegramMessage(1L, user, chat, 1729600000L, "/active")));
+        assertDoesNotThrow(() -> botService.handleIncomingMessage(new TelegramMessage(2L, user, chat, 1729600000L, "/odds")));
+        assertDoesNotThrow(() -> botService.handleIncomingMessage(new TelegramMessage(3L, user, chat, 1729600000L, "/odds SAMPLE 3")));
+        assertDoesNotThrow(() -> botService.handleIncomingMessage(new TelegramMessage(4L, user, chat, 1729600000L, "/calc SAMPLE 5")));
     }
 
     @Test
@@ -162,8 +202,9 @@ class TelegramBotServiceTest {
         TelegramChat chat = new TelegramChat(123456789L, "private", null, "testuser", "Test");
         TelegramUser user = new TelegramUser(123456789L, false, "Test", "User", "testuser");
         TelegramMessage message = new TelegramMessage(1L, user, chat, 1729600000L, "Sample text");
-        TelegramCallbackQuery query = new TelegramCallbackQuery("cb_123", user, message, null, "calc:SAMPLE");
 
-        assertDoesNotThrow(() -> botService.handleCallbackQuery(query));
+        assertDoesNotThrow(() -> botService.handleCallbackQuery(new TelegramCallbackQuery("cb_1", user, message, null, "calc:SAMPLE:2")));
+        assertDoesNotThrow(() -> botService.handleCallbackQuery(new TelegramCallbackQuery("cb_2", user, message, null, "odds:SAMPLE:3")));
+        assertDoesNotThrow(() -> botService.handleCallbackQuery(new TelegramCallbackQuery("cb_3", user, message, null, "odds:SAMPLE:0")));
     }
 }
