@@ -1,11 +1,9 @@
 package com.ipo.tracker;
 
-import com.ipo.tracker.model.Ipo;
-import com.ipo.tracker.model.IpoStatus;
-import com.ipo.tracker.model.IpoType;
-import com.ipo.tracker.model.Subscriber;
+import com.ipo.tracker.model.*;
 import com.ipo.tracker.repository.SubscriberRepository;
 import com.ipo.tracker.service.IpoAlertService;
+import com.ipo.tracker.service.IpoAllotmentService;
 import com.ipo.tracker.service.IpoService;
 import com.ipo.tracker.telegram.TelegramBotProperties;
 import com.ipo.tracker.telegram.dto.*;
@@ -39,13 +37,16 @@ class TelegramBotServiceTest {
     @Autowired
     private IpoAlertService alertService;
 
+    @Autowired
+    private IpoAllotmentService allotmentService;
+
     private TelegramBotService botService;
 
     private Ipo sampleIpo;
 
     @BeforeEach
     void setUp() {
-        botService = new TelegramBotService(properties, ipoService, formatter, subscriberRepository);
+        botService = new TelegramBotService(properties, ipoService, formatter, subscriberRepository, allotmentService);
         sampleIpo = new Ipo(
                 "sample-ipo",
                 "Sample Company Limited",
@@ -317,4 +318,150 @@ class TelegramBotServiceTest {
         assertDoesNotThrow(() -> alertService.triggerGmpSurgeCheck(123456789L));
         assertDoesNotThrow(() -> alertService.sendTestAlert(123456789L));
     }
+
+    @Test
+    void testPanValidationAndMasking() {
+        assertTrue(allotmentService.isValidPan("ABCDE1234F"));
+        assertTrue(allotmentService.isValidPan("abcde1234f")); // case-insensitive check
+        assertFalse(allotmentService.isValidPan("ABCDE12345")); // ends in digit
+        assertFalse(allotmentService.isValidPan("ABCD12345F")); // only 4 leading letters
+        assertFalse(allotmentService.isValidPan(""));
+        assertFalse(allotmentService.isValidPan(null));
+
+        assertEquals("ABCDE****F", allotmentService.maskPan("ABCDE1234F"));
+        assertEquals("ABCDE****F", allotmentService.maskPan("abcde1234f"));
+    }
+
+    @Test
+    void testAllotmentCheckMechanics() {
+        // Invalid PAN check
+        AllotmentResult invalidPanRes = allotmentService.checkAllotment("SWIGGY", "INVALIDPAN", "Self");
+        assertEquals(AllotmentStatus.INVALID_PAN, invalidPanRes.status());
+        assertEquals("INVALIDPAN", invalidPanRes.maskedPan());
+
+        // Unknown IPO check
+        AllotmentResult unknownIpoRes = allotmentService.checkAllotment("NONEXISTENT_IPO_XYZ", "ABCDE1234F", "Dad");
+        assertEquals(AllotmentStatus.IPO_NOT_FOUND, unknownIpoRes.status());
+
+        // Check against active or closed IPO in client cache
+        List<Ipo> ipos = ipoService.getActiveIpos();
+        if (ipos.isEmpty()) {
+            ipos = ipoService.getUpcomingIpos();
+        }
+        assertFalse(ipos.isEmpty());
+        Ipo firstIpo = ipos.get(0);
+
+        AllotmentResult res = allotmentService.checkAllotment(firstIpo.symbol(), "ABCDE1234F", "Self");
+        assertNotNull(res);
+        assertNotNull(res.status());
+        assertEquals("ABCDE****F", res.maskedPan());
+        assertEquals("Self", res.label());
+        assertTrue(res.sharesApplied() > 0);
+        assertNotNull(res.registrar());
+    }
+
+    @Test
+    void testSavedPansRepositoryOperations() {
+        Long testChatId = System.currentTimeMillis() + 999;
+        subscriberRepository.registerOrUpdate(testChatId, "panuser", "PAN User");
+
+        // Initial list empty
+        List<SavedPan> initial = subscriberRepository.getSavedPans(testChatId);
+        assertTrue(initial.isEmpty());
+
+        // Add 1st PAN
+        boolean added1 = subscriberRepository.addSavedPan(testChatId, "ABCDE1234F", "Self");
+        assertTrue(added1);
+        List<SavedPan> afterAdd1 = subscriberRepository.getSavedPans(testChatId);
+        assertEquals(1, afterAdd1.size());
+        assertEquals("ABCDE1234F", afterAdd1.get(0).pan());
+        assertEquals("ABCDE****F", afterAdd1.get(0).maskedPan());
+        assertEquals("Self", afterAdd1.get(0).label());
+
+        // Add 2nd PAN
+        boolean added2 = subscriberRepository.addSavedPan(testChatId, "XYZPK9876Q", "Dad");
+        assertTrue(added2);
+        assertEquals(2, subscriberRepository.getSavedPans(testChatId).size());
+
+        // Duplicate PAN upsert should update existing record without exceeding 2 PANs
+        boolean dupAdded = subscriberRepository.addSavedPan(testChatId, "abcde1234f", "Self Duplicate");
+        assertTrue(dupAdded);
+        assertEquals(2, subscriberRepository.getSavedPans(testChatId).size());
+        assertEquals("Self Duplicate", subscriberRepository.getSavedPans(testChatId).get(1).label());
+
+        // Remove PAN
+        boolean removed = subscriberRepository.removeSavedPan(testChatId, "ABCDE1234F");
+        assertTrue(removed);
+        List<SavedPan> afterRemove = subscriberRepository.getSavedPans(testChatId);
+        assertEquals(1, afterRemove.size());
+        assertEquals("XYZPK9876Q", afterRemove.get(0).pan());
+    }
+
+    @Test
+    void testAllotmentFormattingAndKeyboards() {
+        AllotmentResult sampleResult = new AllotmentResult(
+                "SAMPLE",
+                "Sample Company Limited",
+                "Link Intime India Pvt Ltd",
+                "ABCDE****F",
+                "Self",
+                AllotmentStatus.ALLOTTED,
+                28,
+                28,
+                14560.0,
+                520.0,
+                570.0,
+                1400.0,
+                "2026-10-28",
+                "2026-10-31",
+                "Congratulations! 1 Retail Lot (28 shares) allotted.",
+                "https://linkintime.co.in/initial_offer/public-issues.html"
+        );
+
+        String formatted = formatter.formatAllotmentResult(sampleResult);
+        assertNotNull(formatted);
+        assertTrue(formatted.contains("ALLOTMENT CONFIRMED!"));
+        assertTrue(formatted.contains("Shares Allotted"));
+        assertTrue(formatted.contains("ABCDE****F"));
+        assertTrue(formatted.contains("Link Intime"));
+
+        InlineKeyboardMarkup resultKeyboard = formatter.createAllotmentResultKeyboard(sampleResult);
+        assertNotNull(resultKeyboard);
+        assertFalse(resultKeyboard.inlineKeyboard().isEmpty());
+
+        // Test Saved PANs formatter
+        SavedPan p1 = SavedPan.of("ABCDE1234F", "Self");
+        SavedPan p2 = SavedPan.of("XYZPK9876Q", "Dad");
+        String walletText = formatter.formatSavedPans(List.of(p1, p2));
+        assertNotNull(walletText);
+        assertTrue(walletText.contains("Saved Family PAN Cards"));
+        assertTrue(walletText.contains("Self"));
+        assertTrue(walletText.contains("Dad"));
+
+        InlineKeyboardMarkup walletKeyboard = formatter.createSavedPansKeyboard(List.of(p1, p2), "SAMPLE");
+        assertNotNull(walletKeyboard);
+        assertFalse(walletKeyboard.inlineKeyboard().isEmpty());
+    }
+
+    @Test
+    void testAllotmentBotCommandsAndCallbacks() {
+        TelegramChat chat = new TelegramChat(123456789L, "private", null, "testuser", "Test");
+        TelegramUser user = new TelegramUser(123456789L, false, "Test", "User", "testuser");
+        TelegramMessage message = new TelegramMessage(1L, user, chat, 1729600000L, "Sample text");
+
+        // Commands
+        assertDoesNotThrow(() -> botService.handleIncomingMessage(new TelegramMessage(10L, user, chat, 1729600000L, "/status")));
+        assertDoesNotThrow(() -> botService.handleIncomingMessage(new TelegramMessage(11L, user, chat, 1729600000L, "/status SAMPLE")));
+        assertDoesNotThrow(() -> botService.handleIncomingMessage(new TelegramMessage(12L, user, chat, 1729600000L, "/status SAMPLE ABCDE1234F")));
+        assertDoesNotThrow(() -> botService.handleIncomingMessage(new TelegramMessage(13L, user, chat, 1729600000L, "/savepan ABCDE1234F Self")));
+        assertDoesNotThrow(() -> botService.handleIncomingMessage(new TelegramMessage(14L, user, chat, 1729600000L, "/mypans")));
+        assertDoesNotThrow(() -> botService.handleIncomingMessage(new TelegramMessage(15L, user, chat, 1729600000L, "/delpan ABCDE1234F")));
+
+        // Callbacks
+        assertDoesNotThrow(() -> botService.handleCallbackQuery(new TelegramCallbackQuery("cb_10", user, message, null, "allot:SAMPLE")));
+        assertDoesNotThrow(() -> botService.handleCallbackQuery(new TelegramCallbackQuery("cb_11", user, message, null, "allotcheck:SAMPLE:ABCDE1234F")));
+        assertDoesNotThrow(() -> botService.handleCallbackQuery(new TelegramCallbackQuery("cb_12", user, message, null, "nav:mypans")));
+        assertDoesNotThrow(() -> botService.handleCallbackQuery(new TelegramCallbackQuery("cb_13", user, message, null, "delpan:ABCDE1234F")));
+    }
 }
+

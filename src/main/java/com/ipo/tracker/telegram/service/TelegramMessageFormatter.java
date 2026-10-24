@@ -1,7 +1,10 @@
 package com.ipo.tracker.telegram.service;
 
+import com.ipo.tracker.model.AllotmentResult;
+import com.ipo.tracker.model.AllotmentStatus;
 import com.ipo.tracker.model.Ipo;
 import com.ipo.tracker.model.IpoType;
+import com.ipo.tracker.model.SavedPan;
 import com.ipo.tracker.model.Subscriber;
 import com.ipo.tracker.telegram.dto.InlineKeyboardButton;
 import com.ipo.tracker.telegram.dto.InlineKeyboardMarkup;
@@ -225,15 +228,18 @@ public class TelegramMessageFormatter {
             InlineKeyboardButton.callback("📊 Subscription", "sub:" + ipo.symbol())
         );
         List<InlineKeyboardButton> row3 = List.of(
-            InlineKeyboardButton.callback("🏦 Registrar Link", "reg:" + ipo.symbol()),
-            InlineKeyboardButton.callback("🔄 Refresh", "refresh:" + ipo.symbol())
+            InlineKeyboardButton.callback("🔍 Check Allotment", "allot:" + ipo.symbol()),
+            InlineKeyboardButton.callback("🏦 Registrar Link", "reg:" + ipo.symbol())
         );
         String trackText = isTracked ? "🔕 Untrack " + ipo.symbol() : "🔔 Track " + ipo.symbol();
         List<InlineKeyboardButton> row4 = List.of(
             InlineKeyboardButton.callback(trackText, "track:" + ipo.symbol()),
+            InlineKeyboardButton.callback("🔄 Refresh", "refresh:" + ipo.symbol())
+        );
+        List<InlineKeyboardButton> row5 = List.of(
             InlineKeyboardButton.callback("🟢 Active List", "nav:active")
         );
-        return InlineKeyboardMarkup.of(List.of(row1, row2, row3, row4));
+        return InlineKeyboardMarkup.of(List.of(row1, row2, row3, row4, row5));
     }
 
     public String formatProfitCalculation(Ipo ipo) {
@@ -931,6 +937,121 @@ public class TelegramMessageFormatter {
         ));
     }
 
+    public String formatAllotmentResult(AllotmentResult result) {
+        StringBuilder sb = new StringBuilder();
+
+        switch (result.status()) {
+            case ALLOTTED -> {
+                sb.append("🎉 <b>ALLOTMENT CONFIRMED!</b>\n");
+                sb.append("🏢 <b>").append(result.companyName()).append(" (").append(result.symbol()).append(")</b>\n");
+                sb.append("━━━━━━━━━━━━━━━━━━━━\n");
+                sb.append("👤 <b>Applicant:</b> ").append(result.label()).append(" (<code>").append(result.maskedPan()).append("</code>)\n");
+                sb.append("📦 <b>Shares Allotted:</b> <b>").append(result.sharesAllotted()).append(" shares</b> (1 Lot)\n");
+                sb.append("💰 <b>Cut-off Price:</b> ₹").append(String.format("%.2f", result.cutOffPrice())).append("\n");
+                sb.append("💵 <b>Amount Debited:</b> ₹").append(String.format("%,.0f", result.amountBlocked())).append("\n");
+                if (result.expectedProfit() > 0) {
+                    sb.append("📈 <b>Est. Listing Price:</b> ₹").append(String.format("%.2f", result.estimatedListingPrice())).append("\n");
+                    sb.append("🔥 <b>Est. Listing Gain:</b> <b>+₹").append(String.format("%,.0f", result.expectedProfit())).append("</b>\n");
+                }
+                sb.append("🗓 <b>Expected Listing:</b> ").append(result.expectedListingDate()).append("\n");
+                sb.append("🏦 <b>Official Registrar:</b> ").append(result.registrar()).append("\n\n");
+                sb.append("ℹ️ <i>Shares will be credited to your Demat account before listing day.</i>");
+            }
+            case NOT_ALLOTTED -> {
+                sb.append("😔 <b>No Allotment</b>\n");
+                sb.append("🏢 <b>").append(result.companyName()).append(" (").append(result.symbol()).append(")</b>\n");
+                sb.append("━━━━━━━━━━━━━━━━━━━━\n");
+                sb.append("👤 <b>Applicant:</b> ").append(result.label()).append(" (<code>").append(result.maskedPan()).append("</code>)\n");
+                sb.append("📦 <b>Applied:</b> ").append(result.sharesApplied()).append(" shares | <b>Allotted:</b> 0 shares\n");
+                sb.append("💵 <b>Blocked Capital:</b> ₹").append(String.format("%,.0f", result.amountBlocked())).append("\n");
+                sb.append("🏦 <b>Official Registrar:</b> ").append(result.registrar()).append("\n\n");
+                sb.append("ℹ️ <i>Your bank will release the ASBA / UPI mandate within 24 hours. Don't worry, better luck on the next issue!</i>");
+            }
+            case NOT_FINALIZED -> {
+                sb.append("⏳ <b>Allotment Status Not Yet Finalized</b>\n");
+                sb.append("🏢 <b>").append(result.companyName()).append(" (").append(result.symbol()).append(")</b>\n");
+                sb.append("━━━━━━━━━━━━━━━━━━━━\n");
+                sb.append("👤 <b>Applicant:</b> ").append(result.label()).append(" (<code>").append(result.maskedPan()).append("</code>)\n");
+                sb.append("🗓 <b>Expected Allotment Date:</b> <b>").append(result.expectedAllotmentDate()).append("</b>\n");
+                sb.append("🏦 <b>Official Registrar:</b> ").append(result.registrar()).append("\n\n");
+                sb.append("<i>The registrar has not uploaded the final basis of allotment yet. As soon as it goes live, you can check directly here!</i>");
+            }
+            case INVALID_PAN -> {
+                sb.append("⚠️ <b>Invalid PAN Format</b>\n");
+                sb.append("━━━━━━━━━━━━━━━━━━━━\n");
+                sb.append("Entered PAN: <code>").append(result.maskedPan()).append("</code>\n\n");
+                sb.append("Indian PAN format must be 10 characters: 5 letters, 4 numbers, and 1 letter (e.g. <code>ABCDE1234F</code>).");
+            }
+            case IPO_NOT_FOUND -> {
+                sb.append("🔍 <b>IPO Not Found</b>\n");
+                sb.append("━━━━━━━━━━━━━━━━━━━━\n");
+                sb.append("Could not find an IPO matching symbol: <code>").append(result.symbol()).append("</code>.\n\n");
+                sb.append("Tap 🟢 <b>Active IPOs</b> or 📊 <b>Closed IPOs</b> to check available symbols.");
+            }
+        }
+        return sb.toString();
+    }
+
+    public InlineKeyboardMarkup createAllotmentResultKeyboard(AllotmentResult result) {
+        List<List<InlineKeyboardButton>> rows = new ArrayList<>();
+        rows.add(List.of(
+            InlineKeyboardButton.url("🌐 Official Registrar Portal", result.checkUrl()),
+            InlineKeyboardButton.url("🏛 BSE India Portal", "https://www.bseindia.com/investors/appli_check.aspx")
+        ));
+        rows.add(List.of(
+            InlineKeyboardButton.callback("🧮 Profit Calc", "calc:" + result.symbol()),
+            InlineKeyboardButton.callback("🎲 Multi-PAN Odds", "odds:" + result.symbol())
+        ));
+        rows.add(List.of(
+            InlineKeyboardButton.callback("⬅️ Back to " + result.symbol(), "ipo:" + result.symbol())
+        ));
+        return InlineKeyboardMarkup.of(rows);
+    }
+
+    public String formatSavedPans(List<SavedPan> pans) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("💼 <b>Saved Family PAN Cards</b>\n");
+        sb.append("━━━━━━━━━━━━━━━━━━━━\n");
+        if (pans.isEmpty()) {
+            sb.append("<i>No PAN cards saved yet.</i>\n\n");
+            sb.append("Save your family PAN cards once to check allotment status with 1 click!\n\n");
+            sb.append("💡 <b>How to Save:</b>\n");
+            sb.append("Type: <code>/savepan &lt;PAN&gt; [label]</code>\n");
+            sb.append("Example: <code>/savepan ABCDE1234F Dad</code>\n");
+        } else {
+            sb.append("You have <b>").append(pans.size()).append("</b> saved PAN card(s):\n\n");
+            for (int i = 0; i < pans.size(); i++) {
+                SavedPan p = pans.get(i);
+                sb.append(i + 1).append(". <b>").append(p.label()).append(":</b> <code>").append(p.maskedPan()).append("</code>\n");
+            }
+            sb.append("\n💡 <i>Tap any PAN below to check allotment or remove.</i>\n");
+            sb.append("To add another: <code>/savepan &lt;PAN&gt; [label]</code>");
+        }
+        return sb.toString();
+    }
+
+    public InlineKeyboardMarkup createSavedPansKeyboard(List<SavedPan> pans, String symbolToCheck) {
+        List<List<InlineKeyboardButton>> rows = new ArrayList<>();
+        if (symbolToCheck != null && !symbolToCheck.isBlank() && !pans.isEmpty()) {
+            for (SavedPan p : pans) {
+                String btnText = "🔍 " + p.label() + " (" + p.maskedPan() + ")";
+                rows.add(List.of(InlineKeyboardButton.callback(btnText, "allotcheck:" + symbolToCheck + ":" + p.pan())));
+            }
+        } else if (!pans.isEmpty()) {
+            for (SavedPan p : pans) {
+                rows.add(List.of(
+                    InlineKeyboardButton.callback("👤 " + p.label() + " (" + p.maskedPan() + ")", "noop"),
+                    InlineKeyboardButton.callback("🗑 Delete", "delpan:" + p.pan())
+                ));
+            }
+        }
+        rows.add(List.of(
+            InlineKeyboardButton.callback("🟢 Active IPOs", "nav:active"),
+            InlineKeyboardButton.callback("💼 My PANs", "nav:mypans")
+        ));
+        return InlineKeyboardMarkup.of(rows);
+    }
+
     public String formatHelp() {
         return """
             📖 <b>IPO Tracker Bot Help</b>
@@ -939,6 +1060,10 @@ public class TelegramMessageFormatter {
             • <b>/start</b> - Open main menu & keyboard
             • <b>/active</b> or <b>/open</b> - List all IPOs open today with interactive buttons
             • <b>/upcoming</b> - List upcoming IPO announcements
+            • <b>/status &lt;name&gt; [pan]</b> - Check live allotment status (e.g. <code>/status swiggy ABCDE1234F</code>)
+            • <b>/savepan &lt;pan&gt; [label]</b> - Save family PAN for 1-click allotment checks (e.g. <code>/savepan ABCDE1234F Dad</code>)
+            • <b>/mypans</b> - View and manage your saved PAN cards
+            • <b>/delpan &lt;pan&gt;</b> - Delete a saved PAN card
             • <b>/odds &lt;name&gt; [pans]</b> - Multi-PAN allotment probability calculator (e.g. <code>/odds swiggy 3</code>)
             • <b>/calc &lt;name&gt; [lots]</b> - Listing profit calculator (e.g. <code>/calc swiggy 2</code>)
             • <b>/alerts</b> - Configure push notifications & view watchlist
@@ -949,6 +1074,8 @@ public class TelegramMessageFormatter {
             • <b>/help</b> - Show this message
 
             <b>Interactive Tools:</b>
+            • <b>🔍 Allotment Checker</b>: Instant PAN status verification across Link Intime, KFintech, Bigshare & BSE.
+            • <b>💼 Family PAN Wallet</b>: Save family PANs once and check all of them with a single tap.
             • <b>🔔 Proactive Alerts</b>: Automated 9 AM Morning Digest, 2 PM Closing Reminders & GMP Surge alerts.
             • <b>🎲 Multi-PAN Odds</b>: Calculates your family allotment probability across 1, 2, 3, 5 & 7 PAN cards using SEBI retail lottery rules.
             • <b>🧮 Profit Calc</b>: Calculates estimated listing gains across custom lot sizes (1, 2, 5 & 14 lots).

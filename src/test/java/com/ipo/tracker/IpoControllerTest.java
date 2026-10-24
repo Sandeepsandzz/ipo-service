@@ -44,4 +44,36 @@ class IpoControllerTest {
                 .andExpect(jsonPath("$.success", is(true)))
                 .andExpect(jsonPath("$.data[*].status", everyItem(is("UPCOMING"))));
     }
+
+    @Test
+    void testValidatePanEndpoint() throws Exception {
+        mockMvc.perform(get("/api/v1/allotment/validate-pan")
+                .param("pan", "ABCDE1234F")
+                .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success", is(true)))
+                .andExpect(jsonPath("$.data.pan", is("ABCDE****F")))
+                .andExpect(jsonPath("$.data.isValid", is(true)));
+
+        mockMvc.perform(get("/api/v1/allotment/validate-pan")
+                .param("pan", "INVALID")
+                .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.isValid", is(false)));
+    }
+
+    @Test
+    void testCheckAllotmentEndpoint() throws Exception {
+        mockMvc.perform(get("/api/v1/allotment/check")
+                .param("symbol", "CORE4ENGIN")
+                .param("pan", "ABCDE1234F")
+                .param("label", "Self")
+                .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success", is(true)))
+                .andExpect(jsonPath("$.data.maskedPan", is("ABCDE****F")))
+                .andExpect(jsonPath("$.data.label", is("Self")))
+                .andExpect(jsonPath("$.data.status", notNullValue()));
+    }
 }
+

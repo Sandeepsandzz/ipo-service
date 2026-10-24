@@ -1,8 +1,11 @@
 package com.ipo.tracker.telegram.service;
 
+import com.ipo.tracker.model.AllotmentResult;
 import com.ipo.tracker.model.Ipo;
+import com.ipo.tracker.model.SavedPan;
 import com.ipo.tracker.model.Subscriber;
 import com.ipo.tracker.repository.SubscriberRepository;
+import com.ipo.tracker.service.IpoAllotmentService;
 import com.ipo.tracker.service.IpoService;
 import com.ipo.tracker.telegram.TelegramBotProperties;
 import com.ipo.tracker.telegram.dto.*;
@@ -14,6 +17,7 @@ import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.ExecutorService;
@@ -30,6 +34,7 @@ public class TelegramBotService {
     private final IpoService ipoService;
     private final TelegramMessageFormatter formatter;
     private final SubscriberRepository subscriberRepository;
+    private final IpoAllotmentService allotmentService;
     private final RestClient restClient;
 
     private final AtomicBoolean running = new AtomicBoolean(false);
@@ -40,11 +45,13 @@ public class TelegramBotService {
             TelegramBotProperties properties,
             IpoService ipoService,
             TelegramMessageFormatter formatter,
-            SubscriberRepository subscriberRepository) {
+            SubscriberRepository subscriberRepository,
+            IpoAllotmentService allotmentService) {
         this.properties = properties;
         this.ipoService = ipoService;
         this.formatter = formatter;
         this.subscriberRepository = subscriberRepository;
+        this.allotmentService = allotmentService;
         this.restClient = RestClient.builder().build();
     }
 
@@ -146,6 +153,14 @@ public class TelegramBotService {
                 handleOddsCommand(chatId, rawText);
             } else if (text.startsWith("/calc") || text.equals("🧮 profit calculator")) {
                 handleCalcCommand(chatId, rawText);
+            } else if (text.startsWith("/status") || text.equals("🔍 check allotment")) {
+                handleStatusCommand(chatId, rawText);
+            } else if (text.startsWith("/savepan")) {
+                handleSavePanCommand(chatId, rawText);
+            } else if (text.startsWith("/mypans")) {
+                handleMyPansCommand(chatId);
+            } else if (text.startsWith("/delpan")) {
+                handleDeletePanCommand(chatId, rawText);
             } else if (text.startsWith("/alerts") || text.equals("🔔 alerts & watchlist")) {
                 handleAlertsCommand(chatId, username, senderName);
             } else if (text.startsWith("/subscribe")) {
@@ -362,6 +377,43 @@ public class TelegramBotService {
             } else if (data.equals("test:alert")) {
                 answerCallbackQuery(queryId, "Sending test alert...", false);
                 handleTestAlert(chatId);
+            } else if (data.startsWith("allot:")) {
+                String symbol = data.substring(6).trim();
+                answerCallbackQuery(queryId, "Opening allotment checker...", false);
+                List<SavedPan> saved = subscriberRepository.getSavedPans(chatId);
+                if (!saved.isEmpty()) {
+                    String prompt = "🔍 <b>Check Allotment: " + escapeHtml(symbol) + "</b>\n\nSelect a family PAN card to verify:";
+                    sendReply(chatId, prompt, formatter.createSavedPansKeyboard(saved, symbol));
+                } else {
+                    String prompt = "🔍 <b>Check Allotment: " + escapeHtml(symbol) + "</b>\n\n"
+                            + "You haven't saved any PAN cards yet.\n\n"
+                            + "Type: <code>/status " + escapeHtml(symbol) + " &lt;PAN&gt;</code>\n"
+                            + "Or save your PAN once with: <code>/savepan &lt;PAN&gt; [label]</code>";
+                    Optional<Ipo> ipo = ipoService.getIpoById(symbol);
+                    boolean isTracked = ipo.isPresent() && subscriberRepository.isInWatchlist(chatId, ipo.get().symbol());
+                    sendReply(chatId, prompt, ipo.isPresent() ? formatter.createSingleIpoKeyboard(ipo.get(), isTracked) : ReplyKeyboardMarkup.defaultMenu());
+                }
+            } else if (data.startsWith("allotcheck:")) {
+                String payload = data.substring(11).trim();
+                String[] split = payload.split(":");
+                String symbol = split[0];
+                String pan = split.length > 1 ? split[1] : "";
+                answerCallbackQuery(queryId, "Checking allotment status...", false);
+                String label = subscriberRepository.getSavedPans(chatId).stream()
+                        .filter(p -> p.pan().equalsIgnoreCase(pan))
+                        .map(SavedPan::label)
+                        .findFirst()
+                        .orElse("Applicant");
+                executeAllotmentCheck(chatId, symbol, pan, label);
+            } else if (data.startsWith("delpan:")) {
+                String pan = data.substring(7).trim();
+                subscriberRepository.removeSavedPan(chatId, pan);
+                answerCallbackQuery(queryId, "Deleted PAN card", false);
+                List<SavedPan> remaining = subscriberRepository.getSavedPans(chatId);
+                sendReply(chatId, formatter.formatSavedPans(remaining), formatter.createSavedPansKeyboard(remaining, null));
+            } else if (data.equals("nav:mypans")) {
+                answerCallbackQuery(queryId, "Opening saved PANs...", false);
+                handleMyPansCommand(chatId);
             } else if (data.startsWith("refresh:")) {
                 String symbol = data.substring(8).trim();
                 Optional<Ipo> ipo = ipoService.getIpoById(symbol);
@@ -408,6 +460,106 @@ public class TelegramBotService {
                     .toBodilessEntity();
         } catch (Exception e) {
             log.debug("Failed to answer callback query {}: {}", callbackQueryId, e.getMessage());
+        }
+    }
+
+    private void handleStatusCommand(Long chatId, String rawText) {
+        String[] parts = rawText.trim().split("\\s+");
+        if (parts.length == 1) {
+            List<SavedPan> saved = subscriberRepository.getSavedPans(chatId);
+            List<Ipo> active = ipoService.getActiveIpos();
+            List<Ipo> closed = ipoService.getClosedIpos();
+
+            StringBuilder sb = new StringBuilder();
+            sb.append("🔍 <b>Live IPO Allotment Status Checker</b>\n");
+            sb.append("━━━━━━━━━━━━━━━━━━━━\n");
+            if (!saved.isEmpty()) {
+                sb.append("You have <b>").append(saved.size()).append("</b> saved family PAN card(s).\n");
+            }
+            sb.append("Select an IPO below to check allotment, or check using command:\n");
+            sb.append("<code>/status &lt;symbol&gt; &lt;PAN&gt;</code>\n\n");
+            sb.append("<i>Example:</i> <code>/status swiggy ABCDE1234F</code>\n");
+            sb.append("<i>Save PAN:</i> <code>/savepan ABCDE1234F Dad</code>");
+
+            List<Ipo> candidates = new ArrayList<>();
+            if (!closed.isEmpty()) candidates.addAll(closed.subList(0, Math.min(4, closed.size())));
+            if (!active.isEmpty()) candidates.addAll(active.subList(0, Math.min(4, active.size())));
+
+            sendReply(chatId, sb.toString(), formatter.createActiveIposKeyboard(candidates));
+            return;
+        }
+
+        String symbol = parts[1].trim();
+        String pan = null;
+        if (parts.length >= 3) {
+            pan = parts[2].trim().toUpperCase();
+        } else {
+            List<SavedPan> saved = subscriberRepository.getSavedPans(chatId);
+            if (!saved.isEmpty()) {
+                Optional<Ipo> ipo = ipoService.getIpoById(symbol);
+                String sym = ipo.map(Ipo::symbol).orElse(symbol.toUpperCase());
+                String prompt = "🔍 <b>Check Allotment for " + escapeHtml(sym) + "</b>\n\nChoose which family PAN card to verify:";
+                sendReply(chatId, prompt, formatter.createSavedPansKeyboard(saved, sym));
+                return;
+            } else {
+                sendReply(chatId, "Please specify your PAN card number:\n<code>/status " + escapeHtml(symbol) + " &lt;PAN&gt;</code>\nExample: <code>/status " + escapeHtml(symbol) + " ABCDE1234F</code>\n\n<i>Or save it once with:</i> <code>/savepan ABCDE1234F Self</code>", ReplyKeyboardMarkup.defaultMenu());
+                return;
+            }
+        }
+
+        executeAllotmentCheck(chatId, symbol, pan, "Applicant");
+    }
+
+    private void executeAllotmentCheck(Long chatId, String symbol, String pan, String label) {
+        AllotmentResult result = allotmentService.checkAllotment(symbol, pan, label);
+        sendReply(chatId, formatter.formatAllotmentResult(result), formatter.createAllotmentResultKeyboard(result));
+    }
+
+    private void handleSavePanCommand(Long chatId, String rawText) {
+        String[] parts = rawText.trim().split("\\s+", 3);
+        if (parts.length < 2) {
+            sendReply(chatId, "⚠️ <b>Usage:</b> <code>/savepan &lt;PAN&gt; [label]</code>\n\n<i>Example:</i> <code>/savepan ABCDE1234F Dad</code>", ReplyKeyboardMarkup.defaultMenu());
+            return;
+        }
+        String pan = parts[1].trim().toUpperCase();
+        String label = parts.length >= 3 ? parts[2].trim() : "Account";
+
+        if (!allotmentService.isValidPan(pan)) {
+            sendReply(chatId, "⚠️ <b>Invalid PAN format:</b> <code>" + escapeHtml(pan) + "</code>\n\nMust be 10 characters (5 letters, 4 digits, 1 letter, e.g. <code>ABCDE1234F</code>).", ReplyKeyboardMarkup.defaultMenu());
+            return;
+        }
+
+        boolean saved = subscriberRepository.addSavedPan(chatId, pan, label);
+        if (saved) {
+            String masked = allotmentService.maskPan(pan);
+            String text = "✅ <b>Saved PAN Card!</b>\n\n"
+                    + "🏷 <b>Label:</b> " + escapeHtml(label) + "\n"
+                    + "💳 <b>PAN:</b> <code>" + masked + "</code>\n\n"
+                    + "Now you can check allotment in 1 click whenever an IPO closes!";
+            List<SavedPan> all = subscriberRepository.getSavedPans(chatId);
+            sendReply(chatId, text, formatter.createSavedPansKeyboard(all, null));
+        } else {
+            sendReply(chatId, "⚠️ Could not save PAN card. Please check the format.", ReplyKeyboardMarkup.defaultMenu());
+        }
+    }
+
+    private void handleMyPansCommand(Long chatId) {
+        List<SavedPan> pans = subscriberRepository.getSavedPans(chatId);
+        sendReply(chatId, formatter.formatSavedPans(pans), formatter.createSavedPansKeyboard(pans, null));
+    }
+
+    private void handleDeletePanCommand(Long chatId, String rawText) {
+        String[] parts = rawText.trim().split("\\s+");
+        if (parts.length < 2) {
+            sendReply(chatId, "Usage: <code>/delpan &lt;PAN&gt;</code>, or tap Delete in <code>/mypans</code>", ReplyKeyboardMarkup.defaultMenu());
+            return;
+        }
+        String pan = parts[1].trim().toUpperCase();
+        boolean removed = subscriberRepository.removeSavedPan(chatId, pan);
+        if (removed) {
+            sendReply(chatId, "🗑 Removed PAN <code>" + escapeHtml(allotmentService.maskPan(pan)) + "</code>.", ReplyKeyboardMarkup.defaultMenu());
+        } else {
+            sendReply(chatId, "PAN not found in your saved list.", ReplyKeyboardMarkup.defaultMenu());
         }
     }
 

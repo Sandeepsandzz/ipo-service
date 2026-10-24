@@ -14,7 +14,7 @@ public record ReplyKeyboardMarkup(
                 List.of(new KeyboardButton("🟢 Active IPOs"), new KeyboardButton("📅 Upcoming IPOs")),
                 List.of(new KeyboardButton("🎲 Allotment Odds"), new KeyboardButton("🧮 Profit Calculator")),
                 List.of(new KeyboardButton("🔔 Alerts & Watchlist"), new KeyboardButton("📊 Closed IPOs")),
-                List.of(new KeyboardButton("❓ Help"))
+                List.of(new KeyboardButton("🔍 Check Allotment"), new KeyboardButton("❓ Help"))
             ),
             true,
             false

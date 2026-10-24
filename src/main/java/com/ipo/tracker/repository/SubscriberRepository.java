@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import com.ipo.tracker.model.SavedPan;
 import com.ipo.tracker.model.Subscriber;
 import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
@@ -158,6 +159,50 @@ public class SubscriberRepository {
         return subscribers.values().stream()
                 .filter(s -> s.gmpSurgeEnabled() || s.watchlist().contains(clean))
                 .collect(Collectors.toList());
+    }
+
+    public synchronized boolean addSavedPan(Long chatId, String rawPan, String label) {
+        if (chatId == null || rawPan == null || rawPan.isBlank()) return false;
+        String cleanPan = rawPan.trim().toUpperCase();
+        if (!cleanPan.matches("^[A-Z]{5}[0-9]{4}[A-Z]{1}$")) {
+            return false;
+        }
+
+        Subscriber sub = subscribers.get(chatId);
+        if (sub == null) {
+            sub = Subscriber.createDefault(chatId, null, null);
+        }
+
+        List<SavedPan> current = new ArrayList<>(sub.savedPans());
+        current.removeIf(p -> p.pan().equalsIgnoreCase(cleanPan));
+        current.add(SavedPan.of(cleanPan, label != null && !label.isBlank() ? label : "Account " + (current.size() + 1)));
+
+        subscribers.put(chatId, sub.withSavedPans(current));
+        saveToFile();
+        return true;
+    }
+
+    public synchronized boolean removeSavedPan(Long chatId, String rawPan) {
+        if (chatId == null || rawPan == null || rawPan.isBlank()) return false;
+        String cleanPan = rawPan.trim().toUpperCase();
+
+        Subscriber sub = subscribers.get(chatId);
+        if (sub == null) return false;
+
+        List<SavedPan> current = new ArrayList<>(sub.savedPans());
+        boolean removed = current.removeIf(p -> p.pan().equalsIgnoreCase(cleanPan));
+        if (removed) {
+            subscribers.put(chatId, sub.withSavedPans(current));
+            saveToFile();
+        }
+        return removed;
+    }
+
+    public List<SavedPan> getSavedPans(Long chatId) {
+        if (chatId == null) return Collections.emptyList();
+        Subscriber sub = subscribers.get(chatId);
+        if (sub == null) return Collections.emptyList();
+        return sub.savedPans();
     }
 
     private synchronized void resolveStoragePath() {
