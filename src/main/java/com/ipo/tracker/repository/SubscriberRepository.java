@@ -8,6 +8,7 @@ import com.ipo.tracker.model.Subscriber;
 import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Repository;
 
 import java.io.File;
@@ -22,9 +23,11 @@ import java.util.stream.Collectors;
 public class SubscriberRepository {
 
     private static final Logger log = LoggerFactory.getLogger(SubscriberRepository.class);
-    private static final String DATA_DIR = "data";
-    private static final String SUBSCRIBERS_FILE = "data/subscribers.json";
 
+    @Value("${ipo.subscribers.file-path:data/subscribers.json}")
+    private String configuredFilePath = "data/subscribers.json";
+
+    private Path resolvedFilePath;
     private final Map<Long, Subscriber> subscribers = new ConcurrentHashMap<>();
     private final ObjectMapper objectMapper;
 
@@ -36,6 +39,7 @@ public class SubscriberRepository {
 
     @PostConstruct
     public void init() {
+        resolveStoragePath();
         loadFromFile();
     }
 
@@ -156,21 +160,67 @@ public class SubscriberRepository {
                 .collect(Collectors.toList());
     }
 
-    private synchronized void saveToFile() {
+    private synchronized void resolveStoragePath() {
+        if (resolvedFilePath != null) return;
         try {
-            Path dirPath = Path.of(DATA_DIR);
-            if (!Files.exists(dirPath)) {
-                Files.createDirectories(dirPath);
+            Path target = Path.of(configuredFilePath != null ? configuredFilePath : "data/subscribers.json");
+            Path parent = target.getParent();
+            if (parent != null && !Files.exists(parent)) {
+                Files.createDirectories(parent);
             }
-            objectMapper.writeValue(new File(SUBSCRIBERS_FILE), subscribers.values());
-        } catch (IOException e) {
-            log.warn("Could not persist subscribers to file {}: {}", SUBSCRIBERS_FILE, e.getMessage());
+            // Test write permission by touching and deleting a hidden test file
+            Path testFile = parent != null ? parent.resolve(".perm_test") : Path.of(".perm_test");
+            Files.writeString(testFile, "ok");
+            Files.deleteIfExists(testFile);
+            this.resolvedFilePath = target;
+            log.info("Subscriber persistence initialized at: {}", resolvedFilePath.toAbsolutePath());
+        } catch (Exception e) {
+            Path fallback = Path.of(System.getProperty("java.io.tmpdir", "/tmp"), "ipo-subscribers.json");
+            log.warn("Cannot write to configured path '{}' ({}). Falling back to temporary directory: {}",
+                    configuredFilePath, e.getMessage(), fallback.toAbsolutePath());
+            this.resolvedFilePath = fallback;
+        }
+    }
+
+    private synchronized void saveToFile() {
+        if (resolvedFilePath == null) {
+            resolveStoragePath();
+        }
+        try {
+            Path parent = resolvedFilePath.getParent();
+            if (parent != null && !Files.exists(parent)) {
+                Files.createDirectories(parent);
+            }
+            objectMapper.writeValue(resolvedFilePath.toFile(), subscribers.values());
+        } catch (Exception e) {
+            Path fallback = Path.of(System.getProperty("java.io.tmpdir", "/tmp"), "ipo-subscribers.json");
+            if (!resolvedFilePath.equals(fallback)) {
+                log.warn("Failed to write to {}: {}. Retrying with fallback: {}", resolvedFilePath, e.getMessage(), fallback);
+                try {
+                    resolvedFilePath = fallback;
+                    objectMapper.writeValue(resolvedFilePath.toFile(), subscribers.values());
+                } catch (Exception ex) {
+                    log.error("Failed to write to fallback subscriber file {}: {}", fallback, ex.getMessage());
+                }
+            } else {
+                log.warn("Could not persist subscribers to file {}: {}", resolvedFilePath, e.getMessage());
+            }
         }
     }
 
     private synchronized void loadFromFile() {
-        File file = new File(SUBSCRIBERS_FILE);
-        if (!file.exists()) return;
+        if (resolvedFilePath == null) {
+            resolveStoragePath();
+        }
+        File file = resolvedFilePath.toFile();
+        if (!file.exists()) {
+            File alt = new File("data/subscribers.json");
+            if (alt.exists()) {
+                file = alt;
+            } else {
+                return;
+            }
+        }
 
         try {
             List<Subscriber> list = objectMapper.readValue(file, new TypeReference<>() {});
@@ -180,10 +230,10 @@ public class SubscriberRepository {
                         subscribers.put(s.chatId(), s);
                     }
                 }
-                log.info("Loaded {} alert subscribers from {}", subscribers.size(), SUBSCRIBERS_FILE);
+                log.info("Loaded {} alert subscribers from {}", subscribers.size(), file.getAbsolutePath());
             }
         } catch (Exception e) {
-            log.warn("Failed to read subscribers from {}: {}", SUBSCRIBERS_FILE, e.getMessage());
+            log.warn("Failed to read subscribers from {}: {}", file.getAbsolutePath(), e.getMessage());
         }
     }
 }

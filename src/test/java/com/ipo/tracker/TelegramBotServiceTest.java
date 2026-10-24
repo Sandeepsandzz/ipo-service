@@ -230,7 +230,7 @@ class TelegramBotServiceTest {
 
     @Test
     void testSubscriberRepositoryOperations() {
-        Long testChatId = 888777666L;
+        Long testChatId = System.currentTimeMillis();
         Subscriber sub = subscriberRepository.registerOrUpdate(testChatId, "johndoe", "John");
         assertNotNull(sub);
         assertTrue(sub.morningDigestEnabled());
