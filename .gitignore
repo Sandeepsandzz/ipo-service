@@ -36,6 +36,7 @@ out/
 .DS_Store
 Thumbs.db
 
-### Local Secret Overrides ###
+### Local Secret Overrides & Runtime Data ###
 *local.properties
 .env
+data/

@@ -1,6 +1,8 @@
 package com.ipo.tracker.telegram.service;
 
 import com.ipo.tracker.model.Ipo;
+import com.ipo.tracker.model.Subscriber;
+import com.ipo.tracker.repository.SubscriberRepository;
 import com.ipo.tracker.service.IpoService;
 import com.ipo.tracker.telegram.TelegramBotProperties;
 import com.ipo.tracker.telegram.dto.*;
@@ -27,6 +29,7 @@ public class TelegramBotService {
     private final TelegramBotProperties properties;
     private final IpoService ipoService;
     private final TelegramMessageFormatter formatter;
+    private final SubscriberRepository subscriberRepository;
     private final RestClient restClient;
 
     private final AtomicBoolean running = new AtomicBoolean(false);
@@ -36,10 +39,12 @@ public class TelegramBotService {
     public TelegramBotService(
             TelegramBotProperties properties,
             IpoService ipoService,
-            TelegramMessageFormatter formatter) {
+            TelegramMessageFormatter formatter,
+            SubscriberRepository subscriberRepository) {
         this.properties = properties;
         this.ipoService = ipoService;
         this.formatter = formatter;
+        this.subscriberRepository = subscriberRepository;
         this.restClient = RestClient.builder().build();
     }
 
@@ -118,8 +123,12 @@ public class TelegramBotService {
         String rawText = message.text().trim();
         String text = rawText.toLowerCase();
         String senderName = message.from() != null ? message.from().firstName() : "";
+        String username = message.from() != null ? message.from().username() : null;
 
         log.info("Received Telegram message from chatId {}: '{}'", chatId, rawText);
+
+        // Auto-register or refresh subscriber profile
+        subscriberRepository.registerOrUpdate(chatId, username, senderName);
 
         try {
             if (text.startsWith("/start") || text.equals("hi") || text.equals("hello")) {
@@ -137,6 +146,19 @@ public class TelegramBotService {
                 handleOddsCommand(chatId, rawText);
             } else if (text.startsWith("/calc") || text.equals("🧮 profit calculator")) {
                 handleCalcCommand(chatId, rawText);
+            } else if (text.startsWith("/alerts") || text.equals("🔔 alerts & watchlist")) {
+                handleAlertsCommand(chatId, username, senderName);
+            } else if (text.startsWith("/subscribe")) {
+                subscriberRepository.updateSettings(chatId, true, true, true);
+                Subscriber sub = subscriberRepository.getSubscriber(chatId).orElseGet(() -> Subscriber.createDefault(chatId, username, senderName));
+                sendReply(chatId, "🔔 <b>All Push Alerts Activated!</b>\n\nYou will receive:\n• 9:00 AM Daily Morning Digest\n• 2:00 PM Closing Day Reminders\n• Real-time GMP Surge Alerts\n\nManage preferences anytime with <code>/alerts</code>.", formatter.createAlertsSettingsKeyboard(sub));
+            } else if (text.startsWith("/unsubscribe")) {
+                subscriberRepository.unsubscribe(chatId);
+                sendReply(chatId, "🔕 <b>All Alerts Paused</b>\n\nYou have turned off automated notifications. Turn back on anytime with <code>/subscribe</code> or <code>/alerts</code>.", ReplyKeyboardMarkup.defaultMenu());
+            } else if (text.startsWith("/track")) {
+                handleTrackCommand(chatId, rawText, username, senderName);
+            } else if (text.startsWith("/testalert")) {
+                handleTestAlert(chatId);
             } else if (text.startsWith("/help") || text.equals("❓ help")) {
                 sendReply(chatId, formatter.formatHelp(), ReplyKeyboardMarkup.defaultMenu());
             } else if (text.startsWith("/ipo ") || text.startsWith("/search ")) {
@@ -146,7 +168,8 @@ public class TelegramBotService {
                 // Check if user typed a symbol or company name directly
                 Optional<Ipo> match = ipoService.getIpoById(rawText);
                 if (match.isPresent()) {
-                    sendReply(chatId, formatter.formatSingleIpo(match.get()), formatter.createSingleIpoKeyboard(match.get()));
+                    boolean isTracked = subscriberRepository.isInWatchlist(chatId, match.get().symbol());
+                    sendReply(chatId, formatter.formatSingleIpo(match.get()), formatter.createSingleIpoKeyboard(match.get(), isTracked));
                 } else {
                     List<Ipo> matches = ipoService.getAllIpos(null, null, rawText);
                     if (!matches.isEmpty()) {
@@ -299,16 +322,53 @@ public class TelegramBotService {
                 String symbol = data.substring(4).trim();
                 Optional<Ipo> ipo = ipoService.getIpoById(symbol);
                 if (ipo.isPresent()) {
-                    sendReply(chatId, formatter.formatSingleIpo(ipo.get()), formatter.createSingleIpoKeyboard(ipo.get()));
+                    boolean isTracked = subscriberRepository.isInWatchlist(chatId, ipo.get().symbol());
+                    sendReply(chatId, formatter.formatSingleIpo(ipo.get()), formatter.createSingleIpoKeyboard(ipo.get(), isTracked));
                 } else {
                     sendReply(chatId, "⚠️ IPO details not found for symbol: " + symbol, null);
                 }
+            } else if (data.startsWith("track:")) {
+                String symbol = data.substring(6).trim().toUpperCase();
+                boolean added = subscriberRepository.toggleWatchlist(chatId, symbol);
+                answerCallbackQuery(queryId, added ? "Added " + symbol + " to watchlist! 🔔" : "Removed " + symbol + " from watchlist 🔕", false);
+                Optional<Ipo> ipo = ipoService.getIpoById(symbol);
+                if (ipo.isPresent()) {
+                    sendReply(chatId, formatter.formatSingleIpo(ipo.get()), formatter.createSingleIpoKeyboard(ipo.get(), added));
+                }
+            } else if (data.startsWith("toggle:")) {
+                String toggleType = data.substring(7).trim();
+                Subscriber current = subscriberRepository.getSubscriber(chatId)
+                        .orElseGet(() -> subscriberRepository.registerOrUpdate(chatId, null, null));
+                Boolean newMorning = null, newClosing = null, newGmp = null;
+                String toast = "";
+                if ("morning".equals(toggleType)) {
+                    newMorning = !current.morningDigestEnabled();
+                    toast = newMorning ? "Morning Digest enabled! 🌅" : "Morning Digest disabled ❌";
+                } else if ("closing".equals(toggleType)) {
+                    newClosing = !current.closingAlertEnabled();
+                    toast = newClosing ? "Closing Cutoff alert enabled! ⏰" : "Closing Cutoff alert disabled ❌";
+                } else if ("gmp".equals(toggleType)) {
+                    newGmp = !current.gmpSurgeEnabled();
+                    toast = newGmp ? "GMP Surge alerts enabled! ⚡️" : "GMP Surge alerts disabled ❌";
+                }
+                Subscriber updated = subscriberRepository.updateSettings(chatId, newMorning, newClosing, newGmp);
+                answerCallbackQuery(queryId, toast, false);
+                sendReply(chatId, formatter.formatAlertsSettings(updated), formatter.createAlertsSettingsKeyboard(updated));
+            } else if (data.equals("nav:alerts")) {
+                answerCallbackQuery(queryId, "Opening alert settings...", false);
+                Subscriber sub = subscriberRepository.getSubscriber(chatId)
+                        .orElseGet(() -> subscriberRepository.registerOrUpdate(chatId, null, null));
+                sendReply(chatId, formatter.formatAlertsSettings(sub), formatter.createAlertsSettingsKeyboard(sub));
+            } else if (data.equals("test:alert")) {
+                answerCallbackQuery(queryId, "Sending test alert...", false);
+                handleTestAlert(chatId);
             } else if (data.startsWith("refresh:")) {
                 String symbol = data.substring(8).trim();
                 Optional<Ipo> ipo = ipoService.getIpoById(symbol);
                 if (ipo.isPresent()) {
                     answerCallbackQuery(queryId, "Refreshed live data for " + symbol + "!", false);
-                    sendReply(chatId, formatter.formatSingleIpo(ipo.get()), formatter.createSingleIpoKeyboard(ipo.get()));
+                    boolean isTracked = subscriberRepository.isInWatchlist(chatId, ipo.get().symbol());
+                    sendReply(chatId, formatter.formatSingleIpo(ipo.get()), formatter.createSingleIpoKeyboard(ipo.get(), isTracked));
                 } else {
                     answerCallbackQuery(queryId, "IPO not found", false);
                 }
@@ -351,6 +411,41 @@ public class TelegramBotService {
         }
     }
 
+    private void handleAlertsCommand(Long chatId, String username, String senderName) {
+        Subscriber sub = subscriberRepository.getSubscriber(chatId)
+                .orElseGet(() -> subscriberRepository.registerOrUpdate(chatId, username, senderName));
+        sendReply(chatId, formatter.formatAlertsSettings(sub), formatter.createAlertsSettingsKeyboard(sub));
+    }
+
+    private void handleTrackCommand(Long chatId, String rawText, String username, String senderName) {
+        String[] parts = rawText.trim().split("\\s+");
+        if (parts.length < 2) {
+            sendReply(chatId, "Please specify an IPO symbol to track/untrack, e.g. <code>/track swiggy</code>", ReplyKeyboardMarkup.defaultMenu());
+            return;
+        }
+        String symbol = parts[1].trim().toUpperCase();
+        boolean added = subscriberRepository.toggleWatchlist(chatId, symbol);
+        String msg = added
+                ? "🔔 Added <code>" + escapeHtml(symbol) + "</code> to your personal watchlist! You will receive GMP surges and closing alerts for this IPO."
+                : "🔕 Removed <code>" + escapeHtml(symbol) + "</code> from your watchlist.";
+
+        Subscriber sub = subscriberRepository.getSubscriber(chatId)
+                .orElseGet(() -> subscriberRepository.registerOrUpdate(chatId, username, senderName));
+        sendReply(chatId, msg + "\n\n" + formatter.formatAlertsSettings(sub), formatter.createAlertsSettingsKeyboard(sub));
+    }
+
+    private void handleTestAlert(Long chatId) {
+        List<Ipo> active = ipoService.getActiveIpos();
+        Ipo preview = !active.isEmpty() ? active.get(0) : (!ipoService.getUpcomingIpos().isEmpty() ? ipoService.getUpcomingIpos().get(0) : null);
+        if (preview != null) {
+            String alertText = "🧪 <b>TEST ALERT: Sample 2:00 PM Closing Cutoff Notification</b>\n\n"
+                    + formatter.formatClosingDayAlert(preview);
+            sendReply(chatId, alertText, formatter.createClosingDayAlertKeyboard(preview));
+        } else {
+            sendReply(chatId, "🧪 <b>Test Alert:</b> Alert notification pipeline is operational!", ReplyKeyboardMarkup.defaultMenu());
+        }
+    }
+
     private void handleSearch(Long chatId, String query) {
         if (query.isBlank()) {
             sendReply(chatId, "Please specify an IPO symbol or company name, e.g. <code>/ipo swiggy</code>", null);
@@ -359,7 +454,8 @@ public class TelegramBotService {
 
         Optional<Ipo> exactMatch = ipoService.getIpoById(query);
         if (exactMatch.isPresent()) {
-            sendReply(chatId, formatter.formatSingleIpo(exactMatch.get()), formatter.createSingleIpoKeyboard(exactMatch.get()));
+            boolean isTracked = subscriberRepository.isInWatchlist(chatId, exactMatch.get().symbol());
+            sendReply(chatId, formatter.formatSingleIpo(exactMatch.get()), formatter.createSingleIpoKeyboard(exactMatch.get(), isTracked));
             return;
         }
 

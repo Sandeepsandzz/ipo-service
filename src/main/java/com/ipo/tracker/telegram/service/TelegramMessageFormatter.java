@@ -2,12 +2,14 @@ package com.ipo.tracker.telegram.service;
 
 import com.ipo.tracker.model.Ipo;
 import com.ipo.tracker.model.IpoType;
+import com.ipo.tracker.model.Subscriber;
 import com.ipo.tracker.telegram.dto.InlineKeyboardButton;
 import com.ipo.tracker.telegram.dto.InlineKeyboardMarkup;
 import org.springframework.stereotype.Component;
 
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
@@ -210,6 +212,10 @@ public class TelegramMessageFormatter {
     }
 
     public InlineKeyboardMarkup createSingleIpoKeyboard(Ipo ipo) {
+        return createSingleIpoKeyboard(ipo, false);
+    }
+
+    public InlineKeyboardMarkup createSingleIpoKeyboard(Ipo ipo, boolean isTracked) {
         List<InlineKeyboardButton> row1 = List.of(
             InlineKeyboardButton.callback("🧮 Profit Calc", "calc:" + ipo.symbol()),
             InlineKeyboardButton.callback("🎲 Multi-PAN Odds", "odds:" + ipo.symbol())
@@ -222,7 +228,9 @@ public class TelegramMessageFormatter {
             InlineKeyboardButton.callback("🏦 Registrar Link", "reg:" + ipo.symbol()),
             InlineKeyboardButton.callback("🔄 Refresh", "refresh:" + ipo.symbol())
         );
+        String trackText = isTracked ? "🔕 Untrack " + ipo.symbol() : "🔔 Track " + ipo.symbol();
         List<InlineKeyboardButton> row4 = List.of(
+            InlineKeyboardButton.callback(trackText, "track:" + ipo.symbol()),
             InlineKeyboardButton.callback("🟢 Active List", "nav:active")
         );
         return InlineKeyboardMarkup.of(List.of(row1, row2, row3, row4));
@@ -722,6 +730,207 @@ public class TelegramMessageFormatter {
         return 0.0;
     }
 
+    public String formatMorningDigest(List<Ipo> openingToday, List<Ipo> closingToday, List<Ipo> active) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("🌅 <b>IPO Daily Morning Digest</b>\n");
+        sb.append("🗓 <i>").append(LocalDate.now().format(DATE_FMT)).append("</i>\n");
+        sb.append("━━━━━━━━━━━━━━━━━━━━\n\n");
+
+        if (!openingToday.isEmpty()) {
+            sb.append("🟢 <b>Opening Today (Bidding Starts):</b>\n");
+            for (Ipo ipo : openingToday) {
+                sb.append("• <b>").append(ipo.companyName()).append("</b> (<code>").append(ipo.symbol()).append("</code>)\n");
+                sb.append("   💰 Price: ₹").append(ipo.minPrice()).append("-₹").append(ipo.maxPrice())
+                  .append(" | 📦 Min: ₹").append(String.format("%,.0f", ipo.minInvestment()))
+                  .append(" | 📈 GMP: ").append(ipo.gmp()).append("\n");
+            }
+            sb.append("\n");
+        }
+
+        if (!closingToday.isEmpty()) {
+            sb.append("⏰ <b>Closing Today (Cutoff 5:00 PM):</b>\n");
+            for (Ipo ipo : closingToday) {
+                sb.append("• <b>").append(ipo.companyName()).append("</b> (<code>").append(ipo.symbol()).append("</code>)\n");
+                sb.append("   📊 Sub: ").append(ipo.subscriptionStatus())
+                  .append(" | 📈 GMP: ").append(ipo.gmp()).append("\n");
+            }
+            sb.append("\n");
+        }
+
+        if (!active.isEmpty()) {
+            sb.append("📊 <b>Ongoing Issues:</b>\n");
+            for (Ipo ipo : active) {
+                sb.append("• <b>").append(ipo.symbol()).append("</b> (Closes: ")
+                  .append(ipo.closeDate().format(DATE_FMT)).append(")")
+                  .append(" | GMP: ").append(ipo.gmp()).append("\n");
+            }
+            sb.append("\n");
+        }
+
+        if (openingToday.isEmpty() && closingToday.isEmpty() && active.isEmpty()) {
+            sb.append("No active IPOs open for bidding today. Stay tuned for upcoming issues!\n\n");
+        }
+
+        sb.append("💡 <i>Tip: Review QIB subscription levels after 1:00 PM for closing issues.</i>");
+        return sb.toString();
+    }
+
+    public InlineKeyboardMarkup createMorningDigestKeyboard() {
+        return InlineKeyboardMarkup.of(List.of(
+            List.of(
+                InlineKeyboardButton.callback("🟢 Active IPOs", "nav:active"),
+                InlineKeyboardButton.callback("📅 Upcoming IPOs", "nav:upcoming")
+            ),
+            List.of(
+                InlineKeyboardButton.callback("⚙️ Alert Settings", "nav:alerts")
+            )
+        ));
+    }
+
+    public String formatClosingDayAlert(Ipo ipo) {
+        double gmpVal = extractGmpValue(ipo.gmp());
+        double price = ipo.maxPrice() > 0 ? ipo.maxPrice() : (ipo.minPrice() > 0 ? ipo.minPrice() : 100.0);
+        double gmpPct = price > 0 ? (gmpVal / price) * 100 : 0;
+        String allotmentDateStr = ipo.closeDate() != null ? ipo.closeDate().plusDays(1).format(DATE_FMT) : "TBD";
+
+        return """
+            ⏰ <b>FINAL CALL: Bidding Closes at 5:00 PM Today!</b>
+            🏢 <b>%s (%s)</b>
+            ━━━━━━━━━━━━━━━━━━━━
+            💰 <b>Price Band:</b> ₹%.2f - ₹%.2f
+            📦 <b>Min Investment:</b> ₹%,.0f (%d shares)
+            📈 <b>Live GMP:</b> <code>%s</code> (%.1f%%)
+            📊 <b>Subscription:</b> %s
+            🗓 <b>Allotment Expected:</b> %s
+            🏦 <b>Registrar:</b> %s
+
+            ⚠️ <b>Important Reminders:</b>
+            • SEBI cutoff for submitting bids & UPI mandate authorization is strictly <b>5:00 PM IST</b>.
+            • Banking gateways experience high traffic after 4:00 PM; authorize mandates early!
+            • Retail allotment is strictly lottery-based if oversubscribed.
+            """.formatted(
+                ipo.companyName(),
+                ipo.symbol(),
+                ipo.minPrice(),
+                ipo.maxPrice(),
+                ipo.minInvestment(),
+                ipo.lotSize(),
+                ipo.gmp(),
+                gmpPct,
+                ipo.subscriptionStatus(),
+                allotmentDateStr,
+                ipo.registrar()
+        );
+    }
+
+    public InlineKeyboardMarkup createClosingDayAlertKeyboard(Ipo ipo) {
+        return InlineKeyboardMarkup.of(List.of(
+            List.of(
+                InlineKeyboardButton.callback("🧮 Profit Calc", "calc:" + ipo.symbol()),
+                InlineKeyboardButton.callback("🎲 Multi-PAN Odds", "odds:" + ipo.symbol())
+            ),
+            List.of(
+                InlineKeyboardButton.callback("🎯 Smart Score", "score:" + ipo.symbol()),
+                InlineKeyboardButton.callback("🏦 Registrar Link", "reg:" + ipo.symbol())
+            )
+        ));
+    }
+
+    public String formatGmpSurgeAlert(Ipo ipo, String oldGmp, String newGmp, double pctChange) {
+        String direction = pctChange >= 0 ? "🚀 SURGED" : "🔻 DROPPED";
+        String sign = pctChange >= 0 ? "+" : "";
+
+        return """
+            ⚡️ <b>GMP MOVEMENT ALERT: %s</b>
+            🏢 <b>%s (%s)</b>
+            ━━━━━━━━━━━━━━━━━━━━
+            📈 <b>Previous GMP:</b> %s
+            🔥 <b>Current GMP:</b> <code>%s</code>
+            📊 <b>Shift:</b> <b>%s%.1f%%</b>
+
+            <b>Issue Quick View:</b>
+            • <b>Price Band:</b> ₹%.2f - ₹%.2f
+            • <b>Lot Size:</b> %d shares
+            • <b>Current Sub:</b> %s
+            • <b>Closes On:</b> %s
+            """.formatted(
+                direction,
+                ipo.companyName(),
+                ipo.symbol(),
+                oldGmp,
+                newGmp,
+                sign,
+                pctChange,
+                ipo.minPrice(),
+                ipo.maxPrice(),
+                ipo.lotSize(),
+                ipo.subscriptionStatus(),
+                ipo.closeDate() != null ? ipo.closeDate().format(DATE_FMT) : "TBD"
+        );
+    }
+
+    public InlineKeyboardMarkup createGmpSurgeKeyboard(Ipo ipo) {
+        return InlineKeyboardMarkup.of(List.of(
+            List.of(
+                InlineKeyboardButton.callback("🏢 View " + ipo.symbol(), "ipo:" + ipo.symbol()),
+                InlineKeyboardButton.callback("🧮 Profit Calc", "calc:" + ipo.symbol())
+            ),
+            List.of(
+                InlineKeyboardButton.callback("⚙️ Alerts Settings", "nav:alerts")
+            )
+        ));
+    }
+
+    public String formatAlertsSettings(Subscriber sub) {
+        String morningStatus = sub.morningDigestEnabled() ? "✅ Active (9:00 AM IST)" : "❌ Disabled";
+        String closingStatus = sub.closingAlertEnabled() ? "✅ Active (2:00 PM IST)" : "❌ Disabled";
+        String gmpStatus = sub.gmpSurgeEnabled() ? "✅ Active (±15% Movement)" : "❌ Disabled";
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("⚙️ <b>Push Notification & Watchlist Preferences</b>\n");
+        sb.append("━━━━━━━━━━━━━━━━━━━━\n");
+        sb.append("🌅 <b>Daily Morning Digest:</b> ").append(morningStatus).append("\n");
+        sb.append("⏰ <b>Closing Cutoff Reminder:</b> ").append(closingStatus).append("\n");
+        sb.append("⚡️ <b>GMP Surge Alerts:</b> ").append(gmpStatus).append("\n\n");
+
+        sb.append("📋 <b>Your Tracked Watchlist (").append(sub.watchlist().size()).append("):</b>\n");
+        if (sub.watchlist().isEmpty()) {
+            sb.append("<i>No symbols in watchlist. Tap '🔔 Track' on any IPO to monitor it!</i>\n");
+        } else {
+            for (String sym : sub.watchlist()) {
+                sb.append("• <code>").append(sym).append("</code>\n");
+            }
+        }
+
+        sb.append("\n💡 <b>Commands:</b>\n");
+        sb.append("• <code>/track &lt;symbol&gt;</code> - Add or remove IPO from watchlist\n");
+        sb.append("• <code>/testalert</code> - Receive an instant sample push alert\n");
+        sb.append("• <code>/unsubscribe</code> - Turn off all alerts\n");
+        sb.append("• <code>/subscribe</code> - Turn on all alerts\n");
+
+        return sb.toString();
+    }
+
+    public InlineKeyboardMarkup createAlertsSettingsKeyboard(Subscriber sub) {
+        String morningBtn = sub.morningDigestEnabled() ? "🌅 Morning: ON ✅" : "🌅 Morning: OFF ❌";
+        String closingBtn = sub.closingAlertEnabled() ? "⏰ Cutoff: ON ✅" : "⏰ Cutoff: OFF ❌";
+        String gmpBtn = sub.gmpSurgeEnabled() ? "⚡️ GMP Surge: ON ✅" : "⚡️ GMP Surge: OFF ❌";
+
+        return InlineKeyboardMarkup.of(List.of(
+            List.of(
+                InlineKeyboardButton.callback(morningBtn, "toggle:morning"),
+                InlineKeyboardButton.callback(closingBtn, "toggle:closing")
+            ),
+            List.of(
+                InlineKeyboardButton.callback(gmpBtn, "toggle:gmp")
+            ),
+            List.of(
+                InlineKeyboardButton.callback("🧪 Send Test Alert", "test:alert"),
+                InlineKeyboardButton.callback("🟢 Active IPOs", "nav:active")
+            )
+        ));
+    }
+
     public String formatHelp() {
         return """
             📖 <b>IPO Tracker Bot Help</b>
@@ -732,11 +941,15 @@ public class TelegramMessageFormatter {
             • <b>/upcoming</b> - List upcoming IPO announcements
             • <b>/odds &lt;name&gt; [pans]</b> - Multi-PAN allotment probability calculator (e.g. <code>/odds swiggy 3</code>)
             • <b>/calc &lt;name&gt; [lots]</b> - Listing profit calculator (e.g. <code>/calc swiggy 2</code>)
+            • <b>/alerts</b> - Configure push notifications & view watchlist
+            • <b>/track &lt;symbol&gt;</b> - Toggle symbol in your alert watchlist
+            • <b>/testalert</b> - Receive an instant sample push alert
             • <b>/closed</b> - List recently closed IPOs
             • <b>/ipo &lt;symbol&gt;</b> - Search for a specific IPO (e.g. <code>/ipo swiggy</code>)
             • <b>/help</b> - Show this message
 
             <b>Interactive Tools:</b>
+            • <b>🔔 Proactive Alerts</b>: Automated 9 AM Morning Digest, 2 PM Closing Reminders & GMP Surge alerts.
             • <b>🎲 Multi-PAN Odds</b>: Calculates your family allotment probability across 1, 2, 3, 5 & 7 PAN cards using SEBI retail lottery rules.
             • <b>🧮 Profit Calc</b>: Calculates estimated listing gains across custom lot sizes (1, 2, 5 & 14 lots).
             • <b>🎯 Apply Score</b>: Automated 0-100 score based on GMP, QIB backing & issue type.
