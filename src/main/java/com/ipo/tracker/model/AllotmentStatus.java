@@ -5,5 +5,6 @@ public enum AllotmentStatus {
     NOT_ALLOTTED,
     NOT_FINALIZED,
     INVALID_PAN,
-    IPO_NOT_FOUND
+    IPO_NOT_FOUND,
+    UNAVAILABLE
 }
