@@ -1,13 +1,10 @@
 package com.ipo.tracker.controller;
 
 import com.ipo.tracker.model.IpoApiResponse;
-import com.ipo.tracker.model.Subscriber;
-import com.ipo.tracker.repository.SubscriberRepository;
 import com.ipo.tracker.service.IpoAlertService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.List;
 import java.util.Map;
 
 @RestController
@@ -16,11 +13,8 @@ import java.util.Map;
 public class AlertController {
 
     private final IpoAlertService alertService;
-    private final SubscriberRepository subscriberRepository;
-
-    public AlertController(IpoAlertService alertService, SubscriberRepository subscriberRepository) {
+    public AlertController(IpoAlertService alertService) {
         this.alertService = alertService;
-        this.subscriberRepository = subscriberRepository;
     }
 
     /**
@@ -82,17 +76,4 @@ public class AlertController {
         ));
     }
 
-    /**
-     * List all registered subscribers and preferences.
-     * GET /api/v1/alerts/subscribers
-     */
-    @GetMapping("/subscribers")
-    public ResponseEntity<IpoApiResponse<List<Subscriber>>> getSubscribers() {
-        List<Subscriber> all = subscriberRepository.getAllSubscribers();
-        return ResponseEntity.ok(IpoApiResponse.of(
-                "Found " + all.size() + " registered subscriber(s)",
-                all.size(),
-                all
-        ));
-    }
 }

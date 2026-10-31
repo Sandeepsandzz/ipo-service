@@ -132,3 +132,9 @@ In your deployment environment variables on Render / Railway, simply add:
 - `TELEGRAM_BOT_TOKEN` = `your_bot_token`
 - `TELEGRAM_BOT_USERNAME` = `your_bot_username`
 The bot will connect and poll automatically without needing a webhook URL.
+
+### Administrative alert API
+
+All `/api/v1/alerts/**` routes require the `X-Admin-Token` header and the server must be configured with a strong `IPO_ADMIN_TOKEN`. If it is unset, these routes return `503`. Do not place this token in a mobile or browser build. Subscriber listing is not exposed by the API.
+
+Subscriber records, including saved Telegram PANs, are encrypted with AES-GCM at rest. Set `IPO_PAN_ENCRYPTION_KEY` to a strong secret of at least 16 characters and keep it stable across restarts; encrypted data cannot be read without it. Existing plaintext subscriber JSON is migrated when this key is configured.

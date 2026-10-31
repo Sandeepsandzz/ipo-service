@@ -21,17 +21,15 @@ public class AllotmentController {
 
     /**
      * Check allotment status for a given symbol and PAN.
-     * GET /api/v1/allotment/check?symbol=swiggy&pan=ABCDE1234F&label=Self
+     * POST /api/v1/allotment/check (PAN is sent in the request body)
      */
-    @GetMapping("/check")
+    @PostMapping("/check")
     public ResponseEntity<IpoApiResponse<AllotmentResult>> checkAllotment(
-            @RequestParam String symbol,
-            @RequestParam String pan,
-            @RequestParam(required = false) String label) {
+            @RequestBody AllotmentCheckRequest request) {
 
-        AllotmentResult result = allotmentService.checkAllotment(symbol, pan, label);
+        AllotmentResult result = allotmentService.checkAllotment(request.symbol(), request.pan(), request.label());
         return ResponseEntity.ok(IpoApiResponse.of(
-                "Allotment query completed for symbol " + symbol,
+                "Allotment query completed for symbol " + request.symbol(),
                 1,
                 result
         ));

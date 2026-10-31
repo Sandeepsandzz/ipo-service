@@ -13,9 +13,15 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Repository;
 
 import java.io.File;
-import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.SecureRandom;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import javax.crypto.Cipher;
+import javax.crypto.spec.GCMParameterSpec;
+import javax.crypto.spec.SecretKeySpec;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
@@ -27,6 +33,9 @@ public class SubscriberRepository {
 
     @Value("${ipo.subscribers.file-path:data/subscribers.json}")
     private String configuredFilePath = "data/subscribers.json";
+
+    @Value("${ipo.pan-encryption-key:}")
+    private String panEncryptionKey = "";
 
     private Path resolvedFilePath;
     private final Map<Long, Subscriber> subscribers = new ConcurrentHashMap<>();
@@ -236,14 +245,14 @@ public class SubscriberRepository {
             if (parent != null && !Files.exists(parent)) {
                 Files.createDirectories(parent);
             }
-            objectMapper.writeValue(resolvedFilePath.toFile(), subscribers.values());
+            Files.writeString(resolvedFilePath, encrypt(objectMapper.writeValueAsBytes(subscribers.values())));
         } catch (Exception e) {
             Path fallback = Path.of(System.getProperty("java.io.tmpdir", "/tmp"), "ipo-subscribers.json");
             if (!resolvedFilePath.equals(fallback)) {
                 log.warn("Failed to write to {}: {}. Retrying with fallback: {}", resolvedFilePath, e.getMessage(), fallback);
                 try {
                     resolvedFilePath = fallback;
-                    objectMapper.writeValue(resolvedFilePath.toFile(), subscribers.values());
+                    Files.writeString(resolvedFilePath, encrypt(objectMapper.writeValueAsBytes(subscribers.values())));
                 } catch (Exception ex) {
                     log.error("Failed to write to fallback subscriber file {}: {}", fallback, ex.getMessage());
                 }
@@ -268,7 +277,9 @@ public class SubscriberRepository {
         }
 
         try {
-            List<Subscriber> list = objectMapper.readValue(file, new TypeReference<>() {});
+            String stored = Files.readString(file.toPath());
+            byte[] json = stored.startsWith("ENC1:") ? decrypt(stored) : stored.getBytes(StandardCharsets.UTF_8);
+            List<Subscriber> list = objectMapper.readValue(json, new TypeReference<>() {});
             if (list != null) {
                 for (Subscriber s : list) {
                     if (s.chatId() != null) {
@@ -276,9 +287,38 @@ public class SubscriberRepository {
                     }
                 }
                 log.info("Loaded {} alert subscribers from {}", subscribers.size(), file.getAbsolutePath());
+                if (!stored.startsWith("ENC1:")) saveToFile();
             }
         } catch (Exception e) {
             log.warn("Failed to read subscribers from {}: {}", file.getAbsolutePath(), e.getMessage());
         }
+    }
+
+    private String encrypt(byte[] plain) throws Exception {
+        if (panEncryptionKey == null || panEncryptionKey.length() < 16)
+            throw new IllegalStateException("Set IPO_PAN_ENCRYPTION_KEY (at least 16 characters) to persist subscriber data securely.");
+        byte[] nonce = new byte[12];
+        new SecureRandom().nextBytes(nonce);
+        Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
+        cipher.init(Cipher.ENCRYPT_MODE, key(), new GCMParameterSpec(128, nonce));
+        byte[] encrypted = cipher.doFinal(plain);
+        return "ENC1:" + Base64.getEncoder().encodeToString(ByteBuffer.allocate(nonce.length + encrypted.length).put(nonce).put(encrypted).array());
+    }
+
+    private byte[] decrypt(String encoded) throws Exception {
+        if (panEncryptionKey == null || panEncryptionKey.length() < 16)
+            throw new IllegalStateException("IPO_PAN_ENCRYPTION_KEY is required to read encrypted subscriber data.");
+        byte[] payload = Base64.getDecoder().decode(encoded.substring(5));
+        ByteBuffer buffer = ByteBuffer.wrap(payload);
+        byte[] nonce = new byte[12]; buffer.get(nonce);
+        byte[] encrypted = new byte[buffer.remaining()]; buffer.get(encrypted);
+        Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
+        cipher.init(Cipher.DECRYPT_MODE, key(), new GCMParameterSpec(128, nonce));
+        return cipher.doFinal(encrypted);
+    }
+
+    private SecretKeySpec key() throws Exception {
+        byte[] digest = MessageDigest.getInstance("SHA-256").digest(panEncryptionKey.getBytes(StandardCharsets.UTF_8));
+        return new SecretKeySpec(digest, "AES");
     }
 }
