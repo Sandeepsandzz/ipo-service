@@ -988,6 +988,12 @@ public class TelegramMessageFormatter {
                 sb.append("Could not find an IPO matching symbol: <code>").append(result.symbol()).append("</code>.\n\n");
                 sb.append("Tap 🟢 <b>Active IPOs</b> or 📊 <b>Closed IPOs</b> to check available symbols.");
             }
+            case UNAVAILABLE -> {
+                sb.append("ℹ️ <b>Verify directly with the registrar</b>\n");
+                sb.append("━━━━━━━━━━━━━━━━━━━━\n");
+                sb.append("This service cannot access registrar allotment records. No allotment outcome has been generated.\n\n");
+                sb.append("Use the official registrar portal or BSE India link below.");
+            }
         }
         return sb.toString();
     }

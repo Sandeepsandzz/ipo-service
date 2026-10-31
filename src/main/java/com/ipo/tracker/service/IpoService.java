@@ -29,7 +29,10 @@ public class IpoService {
     }
 
     public List<Ipo> getActiveIpos(LocalDate asOfDate) {
-        return nseLiveClient.getLiveActiveIpos();
+        return nseLiveClient.getLiveAllIpos().stream()
+                .filter(ipo -> ipo.computeStatus(asOfDate) == IpoStatus.OPEN)
+                .map(ipo -> ipo.withComputedStatus(asOfDate))
+                .toList();
     }
 
     /**
@@ -51,9 +54,7 @@ public class IpoService {
      */
     public List<Ipo> getAllIpos(IpoStatus status, IpoType type, String query) {
         List<Ipo> combined = new ArrayList<>();
-        combined.addAll(getActiveIpos());
-        combined.addAll(getUpcomingIpos());
-        combined.addAll(getClosedIpos());
+        combined.addAll(nseLiveClient.getLiveAllIpos());
 
         return combined.stream()
                 .filter(ipo -> status == null || ipo.status() == status)

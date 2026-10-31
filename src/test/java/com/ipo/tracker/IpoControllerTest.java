@@ -9,6 +9,7 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import static org.hamcrest.Matchers.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 @SpringBootTest
@@ -64,11 +65,9 @@ class IpoControllerTest {
 
     @Test
     void testCheckAllotmentEndpoint() throws Exception {
-        mockMvc.perform(get("/api/v1/allotment/check")
-                .param("symbol", "CORE4ENGIN")
-                .param("pan", "ABCDE1234F")
-                .param("label", "Self")
-                .contentType(MediaType.APPLICATION_JSON))
+        mockMvc.perform(post("/api/v1/allotment/check")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"symbol\":\"CORE4ENGIN\",\"pan\":\"ABCDE1234F\",\"label\":\"Self\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success", is(true)))
                 .andExpect(jsonPath("$.data.maskedPan", is("ABCDE****F")))

@@ -104,22 +104,13 @@ public class NseLiveIpoClient {
             List<Ipo> upcoming = fetchUpcomingFromNse();
             List<Ipo> past = fetchPastFromNse();
 
-            if (active.isEmpty() && upcoming.isEmpty()) {
+            if (active.isEmpty() && upcoming.isEmpty() && past.isEmpty()) {
                 log.warn("NSE India returned empty/403 (cloud datacenter IP detected). Activating live market tracker fallback...");
                 fetchFromMarketTrackerFallback();
             } else {
-                if (!active.isEmpty()) {
-                    cachedActive.clear();
-                    cachedActive.addAll(active);
-                }
-                if (!upcoming.isEmpty()) {
-                    cachedUpcoming.clear();
-                    cachedUpcoming.addAll(upcoming);
-                }
-                if (!past.isEmpty()) {
-                    cachedPast.clear();
-                    cachedPast.addAll(past);
-                }
+                cachedActive.clear(); cachedActive.addAll(active);
+                cachedUpcoming.clear(); cachedUpcoming.addAll(upcoming);
+                cachedPast.clear(); cachedPast.addAll(past);
             }
 
             lastCacheUpdate = Instant.now();
@@ -150,6 +141,15 @@ public class NseLiveIpoClient {
             refreshAllLiveIpos();
         }
         return new ArrayList<>(cachedPast);
+    }
+
+    public List<Ipo> getLiveAllIpos() {
+        if (Duration.between(lastCacheUpdate, Instant.now()).toMinutes() >= 5
+                || (cachedActive.isEmpty() && cachedUpcoming.isEmpty() && cachedPast.isEmpty())) refreshAllLiveIpos();
+        List<Ipo> all = new ArrayList<>(cachedActive);
+        all.addAll(cachedUpcoming);
+        all.addAll(cachedPast);
+        return all;
     }
 
     private List<Ipo> fetchActiveFromNse() {
@@ -242,7 +242,7 @@ public class NseLiveIpoClient {
             double maxPrice = priceBand[1];
 
             // SEBI standard retail minimum investment is ~₹14,500
-            int lotSize = maxPrice > 0 ? Math.max(1, (int) Math.round(14500.0 / maxPrice)) : 100;
+            int lotSize = node.path("marketLot").asInt(node.path("lotSize").asInt(0));
             double minInvestment = lotSize * maxPrice;
 
             String startDateStr = node.hasNonNull("issueStartDate") ? node.path("issueStartDate").asText("") : node.path("ipoStartDate").asText("");
@@ -294,7 +294,7 @@ public class NseLiveIpoClient {
     }
 
     private double[] extractPriceBand(String text) {
-        if (text == null || text.isBlank()) return new double[]{100.0, 100.0};
+        if (text == null || text.isBlank()) return new double[]{0.0, 0.0};
         Matcher m = PRICE_NUMBER_PATTERN.matcher(text.replace(",", ""));
         List<Double> numbers = new ArrayList<>();
         while (m.find()) {
@@ -303,7 +303,7 @@ public class NseLiveIpoClient {
             } catch (Exception ignored) {}
         }
         if (numbers.isEmpty()) {
-            return new double[]{100.0, 100.0};
+            return new double[]{0.0, 0.0};
         } else if (numbers.size() == 1) {
             return new double[]{numbers.get(0), numbers.get(0)};
         } else {
@@ -321,7 +321,7 @@ public class NseLiveIpoClient {
     }
 
     private String formatIssueSize(String raw) {
-        if (raw == null || raw.isBlank()) return "₹1,000+ Cr";
+        if (raw == null || raw.isBlank()) return "N/A";
         try {
             double shares = Double.parseDouble(raw);
             if (shares >= 10_000_000) {
@@ -347,6 +347,7 @@ public class NseLiveIpoClient {
             HttpResponse<String> resp = httpClient.send(req, HttpResponse.BodyHandlers.ofString());
             if (resp.statusCode() != 200) {
                 log.warn("Market tracker fallback returned status {}", resp.statusCode());
+                cachedActive.clear(); cachedUpcoming.clear(); cachedPast.clear();
                 return;
             }
 
@@ -397,25 +398,23 @@ public class NseLiveIpoClient {
                     subStatus = sm.group(1).trim() + " overall";
                 }
 
-                String priceStr = "100";
+                String priceStr = "";
                 Matcher pm = pricePat.matcher(row);
                 if (pm.find()) priceStr = pm.group(1).trim();
                 double[] prices = extractPriceBand(priceStr);
                 double minPrice = prices[0];
                 double maxPrice = prices[1];
 
-                int lotSize = 100;
+                int lotSize = 0;
                 Matcher lm = lotPat.matcher(row);
                 if (lm.find() && !lm.group(1).isBlank() && !lm.group(1).equals("-")) {
                     try {
                         lotSize = Integer.parseInt(lm.group(1).trim());
                     } catch (Exception ignored) {}
-                } else if (maxPrice > 0) {
-                    lotSize = Math.max(1, (int) Math.round(14500.0 / maxPrice));
                 }
                 double minInvestment = lotSize * maxPrice;
 
-                String issueSize = "₹100+ Cr";
+                String issueSize = "N/A";
                 Matcher szm = sizePat.matcher(row);
                 if (szm.find() && !szm.group(1).isBlank()) {
                     issueSize = szm.group(1).replaceAll("&#8377;", "₹").trim();
@@ -469,22 +468,15 @@ public class NseLiveIpoClient {
                 }
             }
 
-            if (!fallbackActive.isEmpty() || !fallbackUpcoming.isEmpty()) {
-                cachedActive.clear();
-                cachedActive.addAll(fallbackActive);
-
-                cachedUpcoming.clear();
-                cachedUpcoming.addAll(fallbackUpcoming);
-
-                cachedPast.clear();
-                cachedPast.addAll(fallbackPast);
-
-                lastCacheUpdate = Instant.now();
-                log.info("Market tracker fallback loaded: {} active, {} upcoming, {} past IPOs.",
-                        cachedActive.size(), cachedUpcoming.size(), cachedPast.size());
-            }
+            cachedActive.clear(); cachedActive.addAll(fallbackActive);
+            cachedUpcoming.clear(); cachedUpcoming.addAll(fallbackUpcoming);
+            cachedPast.clear(); cachedPast.addAll(fallbackPast);
+            lastCacheUpdate = Instant.now();
+            log.info("Market tracker fallback loaded: {} active, {} upcoming, {} past IPOs.",
+                    cachedActive.size(), cachedUpcoming.size(), cachedPast.size());
         } catch (Exception e) {
             log.error("Failed to load live market tracker fallback: {}", e.getMessage(), e);
+            cachedActive.clear(); cachedUpcoming.clear(); cachedPast.clear();
         }
     }
 
